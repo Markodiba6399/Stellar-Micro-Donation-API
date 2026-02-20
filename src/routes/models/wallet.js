@@ -36,9 +36,7 @@ class Wallet {
       address: walletData.address,
       label: walletData.label || null,
       ownerName: walletData.ownerName || null,
-      active: true,
       createdAt: new Date().toISOString(),
-      deactivatedAt: null,
       ...walletData
     };
     wallets.push(newWallet);
@@ -72,44 +70,6 @@ class Wallet {
     };
     this.saveWallets(wallets);
     return wallets[index];
-  }
-
-  static getActive() {
-    return this.loadWallets().filter(w => w.active === true);
-  }
-
-  static deactivate(id) {
-    const wallets = this.loadWallets();
-    const wallet = wallets.find(w => w.id === id);
-    if (wallet) {
-      wallet.active = false;
-      wallet.deactivatedAt = new Date().toISOString();
-      this.saveWallets(wallets);
-      return wallet;
-    }
-    return null;
-  }
-
-  static activate(id) {
-    const wallets = this.loadWallets();
-    const wallet = wallets.find(w => w.id === id);
-    if (wallet) {
-      wallet.active = true;
-      wallet.deactivatedAt = null;
-      this.saveWallets(wallets);
-      return wallet;
-    }
-    return null;
-  }
-
-  static isActive(id) {
-    const wallet = this.getById(id);
-    return wallet && wallet.active === true;
-  }
-
-  static isActiveByAddress(address) {
-    const wallet = this.getByAddress(address);
-    return wallet && wallet.active === true;
   }
 }
 

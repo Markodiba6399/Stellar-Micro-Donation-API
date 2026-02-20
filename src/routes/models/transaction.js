@@ -35,6 +35,17 @@ class Transaction {
 
   static create(transactionData) {
     const transactions = this.loadTransactions();
+
+   if (transactionData.idempotencyKey) {
+    const existingTransaction = transactions.find(
+      t => t.idempotencyKey === transactionData.idempotencyKey
+    );
+
+    if (existingTransaction) {
+      return existingTransaction; 
+    }
+  }
+
     const newTransaction = {
       id: Date.now().toString(),
       amount: transactionData.amount,
@@ -43,6 +54,7 @@ class Transaction {
       timestamp: new Date().toISOString(),
       status: 'completed',
       stellarTxId: transactionData.stellarTxId || null,
+      idempotencyKey: transactionData.idempotencyKey || null,
       ...transactionData
     };
     transactions.push(newTransaction);
@@ -50,9 +62,28 @@ class Transaction {
     return newTransaction;
   }
 
-  static getAll() {
-    return this.loadTransactions();
-  }
+  static getPaginated({ limit = 10, offset = 0 } = {}) {
+  const transactions = this.loadTransactions();
+
+  const total = transactions.length;
+
+  
+  limit = parseInt(limit);
+  offset = parseInt(offset);
+
+  
+  const paginatedData = transactions.slice(offset, offset + limit);
+
+  return {
+    data: paginatedData,
+    pagination: {
+      total,
+      limit,
+      offset,
+      hasMore: offset + limit < total
+    }
+  };
+}
 
   static getById(id) {
     const transactions = this.loadTransactions();
