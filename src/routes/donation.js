@@ -34,11 +34,16 @@ router.post('/verify', async (req, res) => {
       data: result
     });
   } catch (error) {
-    res.status(500).json({
+    // Handle Stellar errors with proper status codes
+    const status = error.status || 500;
+    const code = error.code || 'VERIFICATION_FAILED';
+    const message = error.message || 'Failed to verify transaction';
+
+    res.status(status).json({
       success: false,
       error: {
-        code: 'VERIFICATION_FAILED',
-        message: error.message
+        code,
+        message
       }
     });
   }
