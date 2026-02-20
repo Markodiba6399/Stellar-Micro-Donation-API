@@ -41,6 +41,15 @@ class StellarService {
   }
 
   /**
+   * Check if an account is funded on Stellar
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<{funded: boolean, balance: string, exists: boolean}>}
+   */
+  async isAccountFunded(publicKey) {
+    throw new Error('StellarService.isAccountFunded() not yet implemented');
+  }
+
+  /**
    * Send a donation transaction
    * @param {Object} params
    * @param {string} params.sourceSecret - Source account secret key
@@ -71,6 +80,15 @@ class StellarService {
    */
   streamTransactions(publicKey, onTransaction) {
     throw new Error('StellarService.streamTransactions() not yet implemented');
+  }
+
+  /**
+   * Verify a donation transaction by hash
+   * @param {string} transactionHash - Transaction hash to verify
+   * @returns {Promise<{verified: boolean, transaction: Object}>}
+   */
+  async verifyTransaction(transactionHash) {
+    throw new Error('StellarService.verifyTransaction() not yet implemented');
   }
 }
 
