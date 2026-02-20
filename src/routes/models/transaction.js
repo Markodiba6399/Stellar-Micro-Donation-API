@@ -35,6 +35,17 @@ class Transaction {
 
   static create(transactionData) {
     const transactions = this.loadTransactions();
+
+   if (transactionData.idempotencyKey) {
+    const existingTransaction = transactions.find(
+      t => t.idempotencyKey === transactionData.idempotencyKey
+    );
+
+    if (existingTransaction) {
+      return existingTransaction; 
+    }
+  }
+
     const newTransaction = {
       id: Date.now().toString(),
       amount: transactionData.amount,
@@ -43,6 +54,7 @@ class Transaction {
       timestamp: new Date().toISOString(),
       status: 'completed',
       stellarTxId: transactionData.stellarTxId || null,
+      idempotencyKey: transactionData.idempotencyKey || null,
       ...transactionData
     };
     transactions.push(newTransaction);
