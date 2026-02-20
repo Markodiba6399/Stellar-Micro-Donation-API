@@ -5,17 +5,15 @@ const walletRoutes = require('./wallet');
 const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
 const recurringDonationScheduler = require('../services/RecurringDonationScheduler');
+const logger = require('../middleware/logger');
 
 const app = express();
 
 // Middleware
 app.use(express.json());
 
-// Request logging middleware
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-  next();
-});
+// Request/Response logging middleware
+app.use(logger.middleware());
 
 // Routes
 app.use('/donations', donationRoutes);
