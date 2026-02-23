@@ -3,6 +3,7 @@ node_modules/
 
 # Environment variables
 .env
+.env/
 .env.local
 .env.*.local
 
@@ -14,6 +15,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Database
+database.js/
 *.db
 *.sqlite
 *.sqlite3
@@ -36,3 +38,10 @@ coverage/
 # Build output
 dist/
 build/
+
+package.json
+package-lock.json
+
+app.js/
+MockStellarService.js/
+app.js/
