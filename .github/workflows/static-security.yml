@@ -25,7 +25,7 @@ jobs:
         run: npm ci
       
       - name: Run ESLint Security Analysis
-        run: npm run lint:security
+        run: npm run lint:security -- --max-warnings=100
         continue-on-error: false
       
       - name: Report Results
