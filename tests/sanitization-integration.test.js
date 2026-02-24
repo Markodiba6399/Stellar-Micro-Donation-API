@@ -23,6 +23,11 @@ jest.mock('../src/middleware/idempotencyMiddleware', () => ({
   storeIdempotencyResponse: jest.fn()
 }));
 
+// Mock rate limiters
+jest.mock('express-rate-limit', () => {
+  return jest.fn(() => (req, res, next) => next());
+});
+
 describe('Sanitization Integration Tests', () => {
   let app;
 

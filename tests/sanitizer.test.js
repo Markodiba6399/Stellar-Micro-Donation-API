@@ -38,6 +38,7 @@ describe('Sanitizer Utility', () => {
     test('should remove ANSI escape sequences', () => {
       expect(sanitizeText('\x1B[31mRed Text\x1B[0m')).toBe('Red Text');
       expect(sanitizeText('\x1B[1;32mGreen\x1B[0m')).toBe('Green');
+      expect(sanitizeText('\x1B[2J\x1B[HCleared screen')).toBe('Cleared screen');
     });
 
     test('should restrict to safe characters when specified', () => {

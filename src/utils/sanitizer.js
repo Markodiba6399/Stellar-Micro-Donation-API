@@ -48,12 +48,13 @@ function sanitizeText(input, options = {}) {
   }
 
   // Remove ANSI escape sequences (can break logs)
-  sanitized = sanitized.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
+  // eslint-disable-next-line no-control-regex
+  sanitized = sanitized.replace(/\x1B\[[0-9;]*[mGKHJA-Z]/g, '');
 
   // Optionally restrict to safe characters
   if (!allowSpecialChars) {
-    // Allow only alphanumeric, spaces, and basic punctuation
-    sanitized = sanitized.replace(/[^a-zA-Z0-9\s\-_.@]/g, '');
+    // Allow only alphanumeric, spaces, and basic punctuation (no @ for strict mode)
+    sanitized = sanitized.replace(/[^a-zA-Z0-9\s\-_.]/g, '');
   }
 
   // Truncate to maximum length
