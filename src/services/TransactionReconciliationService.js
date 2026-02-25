@@ -46,12 +46,11 @@ class TransactionReconciliationService {
 
     this.reconciliationInProgress = true;
 
-    try {
-      const requestId = uuidv4();
-      log.setContext({ requestId });
-
-      const pendingTxs = Transaction.getByStatus(TRANSACTION_STATES.PENDING);
-      const submittedTxs = Transaction.getByStatus(TRANSACTION_STATES.SUBMITTED);
+    const requestId = uuidv4();
+    return log.runWithContext({ requestId }, async () => {
+      try {
+        const pendingTxs = Transaction.getByStatus(TRANSACTION_STATES.PENDING);
+        const submittedTxs = Transaction.getByStatus(TRANSACTION_STATES.SUBMITTED);
       
       const txsToCheck = [...pendingTxs, ...submittedTxs];
 
@@ -70,11 +69,12 @@ class TransactionReconciliationService {
       const errors = results.filter(r => r.status === 'rejected').length;
 
       log.info('RECONCILIATION', 'Completed', { total: txsToCheck.length, corrected, errors });
-    } catch (error) {
-      log.error('RECONCILIATION', 'Error during reconciliation', { error: error.message });
-    } finally {
-      this.reconciliationInProgress = false;
-    }
+      } catch (error) {
+        log.error('RECONCILIATION', 'Error during reconciliation', { error: error.message });
+      } finally {
+        this.reconciliationInProgress = false;
+      }
+    });
   }
 
   async reconcileTransaction(tx) {

@@ -87,11 +87,10 @@ class RecurringDonationScheduler {
       return;
     }
 
-    try {
-      const requestId = uuidv4();
-      log.setContext({ requestId });
-
-      const now = new Date().toISOString();
+    const requestId = uuidv4();
+    return log.runWithContext({ requestId }, async () => {
+      try {
+        const now = new Date().toISOString();
       
       // Find all active schedules that are due for execution
       const dueSchedules = await Database.query(
@@ -124,10 +123,11 @@ class RecurringDonationScheduler {
         .map(schedule => this.executeScheduleWithRetry(schedule));
 
       await Promise.allSettled(promises);
-    } catch (error) {
-      log.error('RECURRING_SCHEDULER', 'Error processing schedules', { error: error.message });
-      this.logFailure('PROCESS_SCHEDULES', null, error.message);
-    }
+      } catch (error) {
+        log.error('RECURRING_SCHEDULER', 'Error processing schedules', { error: error.message });
+        this.logFailure('PROCESS_SCHEDULES', null, error.message);
+      }
+    });
   }
 
   /**
