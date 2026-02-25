@@ -5,6 +5,7 @@
  */
 
 const { getStellarService } = require('../src/config/stellar');
+const { resetMockStellarService } = require('./helpers/testIsolation');
 
 describe('Integration Tests - Mock Stellar Service', () => {
   let stellarService;
@@ -13,6 +14,13 @@ describe('Integration Tests - Mock Stellar Service', () => {
     // Force mock mode for testing
     process.env.MOCK_STELLAR = 'true';
     stellarService = getStellarService();
+    // Clear any previous state
+    resetMockStellarService(stellarService);
+  });
+
+  afterEach(() => {
+    // Clean up after each test
+    resetMockStellarService(stellarService);
   });
 
   describe('Wallet Management', () => {
