@@ -1,3 +1,14 @@
+/**
+ * Transaction Routes - API Endpoint Layer
+ * 
+ * RESPONSIBILITY: HTTP request handling for transaction queries and synchronization
+ * OWNER: Backend Team
+ * DEPENDENCIES: Transaction model, TransactionSyncService, middleware (auth, RBAC)
+ * 
+ * Handles transaction listing with pagination and blockchain synchronization operations.
+ * Provides endpoints for querying transaction history and syncing with Stellar network.
+ */
+
 const express = require('express');
 const router = express.Router();
 const Transaction = require('./models/transaction');
@@ -34,41 +45,39 @@ router.get('/', checkPermission(PERMISSIONS.TRANSACTIONS_READ), async (req, res)
     });
 
   } catch (error) {
-    return res.status(500).json({
-      success: false,
-      error: {
-        code: 'SERVER_ERROR',
-        message: 'Failed to fetch transactions'
+    next(error);
+  }
+});
+
+router.post(
+  "/sync",
+  checkPermission(PERMISSIONS.TRANSACTIONS_SYNC),
+  async (req, res, next) => {
+    try {
+      const { publicKey } = req.body;
+
+      if (!publicKey) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: "MISSING_PUBLIC_KEY",
+            message: "publicKey is required",
+          },
+        });
       }
-    });
-  }
-});
 
-router.post('/sync', checkPermission(PERMISSIONS.TRANSACTIONS_SYNC), async (req, res) => {
-  try {
-    const { publicKey } = req.body;
+      const syncService = new TransactionSyncService();
+      const result = await syncService.syncWalletTransactions(publicKey);
 
-    if (!publicKey) {
-      return res.status(400).json({
-        success: false,
-        error: { code: 'MISSING_PUBLIC_KEY', message: 'publicKey is required' }
+      return res.status(200).json({
+        success: true,
+        data: result,
       });
+    } catch (error) {
+      next(error);
     }
-
-    const syncService = new TransactionSyncService();
-    const result = await syncService.syncWalletTransactions(publicKey);
-
-    return res.status(200).json({
-      success: true,
-      data: result
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      error: { code: 'SYNC_FAILED', message: error.message }
-    });
-  }
-});
+  },
+);
 
 
 module.exports = router;

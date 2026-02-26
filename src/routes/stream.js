@@ -1,3 +1,14 @@
+/**
+ * Stream Routes - API Endpoint Layer
+ * 
+ * RESPONSIBILITY: HTTP request handling for recurring donation schedules
+ * OWNER: Backend Team
+ * DEPENDENCIES: Database, middleware (auth, RBAC), validation helpers
+ * 
+ * Handles creation, retrieval, and cancellation of recurring donation schedules.
+ * Manages schedule lifecycle and status updates for automated donation execution.
+ */
+
 const express = require('express');
 const router = express.Router();
 const Database = require('../utils/database');
@@ -138,12 +149,7 @@ router.post('/create', checkPermission(PERMISSIONS.STREAM_CREATE), async (req, r
       }
     });
   } catch (error) {
-    log.error('STREAM_ROUTE', 'Failed to create recurring donation', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Failed to create recurring donation schedule',
-      message: error.message
-    });
+    next(error);
   }
 });
 
@@ -177,12 +183,7 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, r
       count: schedules.length
     });
   } catch (error) {
-    log.error('STREAM_ROUTE', 'Failed to fetch recurring donation schedules', { error: error.message });
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch recurring donation schedules',
-      message: error.message
-    });
+    next(error);
   }
 });
 

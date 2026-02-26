@@ -4,6 +4,7 @@ const path = require('path');
 
 // Internal modules
 const log = require('../utils/log');
+const config = require('../config');
 
 /**
  * Request/Response Auditing Middleware
@@ -128,7 +129,7 @@ class Logger {
       timestamp
     });
 
-    if (process.env.LOG_VERBOSE === 'true') {
+    if (config.logging.verbose) {
       log.info('REQUEST_LOGGER', 'Request payload', { 
         requestId,
         ...logData.request 
@@ -212,9 +213,11 @@ class Logger {
   }
 }
 
+const config = require('../config');
+
 const logger = new Logger({
-  logToFile: process.env.LOG_TO_FILE === 'true',
-  logDir: process.env.LOG_DIR || path.join(__dirname, '../../logs')
+  logToFile: config.logging.toFile,
+  logDir: config.logging.directory
 });
 
 module.exports = logger;
