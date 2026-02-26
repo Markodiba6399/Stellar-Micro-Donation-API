@@ -16,11 +16,11 @@ function loadRateLimitConfig() {
 
   // Validate configuration
   const validation = validateRateLimitConfig(config);
-  
+
   if (!validation.valid) {
     console.warn('[Rate Limit Config] Invalid configuration detected:', validation.errors);
     console.warn('[Rate Limit Config] Falling back to default values');
-    
+
     // Return defaults on validation failure
     return {
       limit: 100,

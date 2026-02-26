@@ -19,7 +19,7 @@ const getEncryptionKey = () => {
         return Buffer.alloc(32, 'dev-secret-key-do-not-use-in-prod');
     }
 
-    // If key is provided as hex or base64, decode it. 
+    // If key is provided as hex or base64, decode it.
     // For simplicity here, we assume it's a string and hash it to 32 bytes.
     return crypto.createHash('sha256').update(key).digest();
 };

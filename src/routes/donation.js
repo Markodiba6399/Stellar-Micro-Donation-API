@@ -80,7 +80,7 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
       { senderId, receiverId, amount },
       ['senderId', 'receiverId', 'amount']
     );
-    
+
     if (!requiredValidation.valid) {
       return res.status(400).json({
         success: false,
@@ -193,12 +193,12 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
 
     res.status(201).json(response);
   } catch (error) {
-    log.error('DONATION_ROUTE', 'Failed to send donation', { 
+    log.error('DONATION_ROUTE', 'Failed to send donation', {
       requestId: req.id,
       error: error.message,
       stack: error.stack
     });
-    
+
     // Handle duplicate donation gracefully
     if (error.name === 'DuplicateError') {
       return res.status(409).json({
@@ -209,7 +209,7 @@ router.post('/send', donationRateLimiter, requireIdempotency, async (req, res) =
         }
       });
     }
-    
+
     res.status(500).json({
       success: false,
       error: 'Failed to send donation',
@@ -259,7 +259,7 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, async (
         error: `Invalid amount: ${amountValidation.error}`
       });
     }
-    
+
     const parsedAmount = amountValidation.value;
 
     // Validate amount against configured limits
@@ -386,16 +386,16 @@ router.get('/limits', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res) =>
  */
 router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
   try {
-    const limitValidation = validateInteger(req.query.limit, { 
-      min: 1, 
-      max: 100, 
-      default: 10 
+    const limitValidation = validateInteger(req.query.limit, {
+      min: 1,
+      max: 100,
+      default: 10
     });
 
     if (!limitValidation.valid) {
       throw new ValidationError(
-        `Invalid limit parameter: ${limitValidation.error}`, 
-        null, 
+        `Invalid limit parameter: ${limitValidation.error}`,
+        null,
         ERROR_CODES.INVALID_LIMIT
       );
     }

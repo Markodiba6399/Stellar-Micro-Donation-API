@@ -1,9 +1,9 @@
 /**
  * Notification Hook Example
- * 
+ *
  * This hook sends notifications for donation lifecycle events.
  * It demonstrates async hook operations and error handling.
- * 
+ *
  * Usage:
  *   const notificationHook = require('./hooks/examples/notificationHook');
  *   notificationHook.register();
@@ -52,7 +52,7 @@ const smsService = {
  */
 async function notifyCreation(payload) {
   const { transaction } = payload;
-  
+
   try {
     // Send confirmation email to donor
     await emailService.send(
@@ -60,14 +60,14 @@ async function notifyCreation(payload) {
       'Donation Received - Thank You!',
       `Dear ${transaction.donor},\n\nThank you for your generous donation of $${transaction.amount} to ${transaction.recipient}.\n\nTransaction ID: ${transaction.id}\nTimestamp: ${transaction.timestamp}\n\nYour support makes a difference!\n\nBest regards,\nDonation Platform`
     );
-    
+
     // Send notification to recipient
     await emailService.send(
       transaction.recipient,
       'New Donation Received',
       `You have received a new donation of $${transaction.amount} from ${transaction.donor}.\n\nTransaction ID: ${transaction.id}\nTimestamp: ${transaction.timestamp}`
     );
-    
+
     console.log('[Notification] Creation notifications sent successfully');
   } catch (error) {
     console.error('[Notification] Error sending creation notifications:', error.message);
@@ -84,7 +84,7 @@ async function notifySubmission(payload) {
       hash: payload.transactionHash,
       id: payload.transactionId
     });
-    
+
     // In production, you might send a notification here
     // For now, just log it
   } catch (error) {
@@ -100,14 +100,14 @@ async function notifyConfirmation(payload) {
   try {
     // Send verification success notification
     console.log('[Notification] Sending verification success notification');
-    
+
     // In production, send actual notification
     // await emailService.send(
     //   donor,
     //   'Donation Verified',
     //   `Your donation has been successfully verified on the blockchain.\n\nTransaction Hash: ${payload.transactionHash}`
     // );
-    
+
     console.log('[Notification] Confirmation notification sent successfully');
   } catch (error) {
     console.error('[Notification] Error sending confirmation notification:', error.message);
@@ -121,13 +121,13 @@ async function notifyConfirmation(payload) {
 async function notifyFailure(payload) {
   try {
     const { errorCode, errorMessage, context } = payload;
-    
+
     console.log('[Notification] Sending failure notification');
-    
+
     if (context.stage === 'creation') {
       // Notify about creation failure
       console.log(`[Notification] Donation creation failed: ${errorMessage}`);
-      
+
       // In production, send notification to support team
       // await emailService.send(
       //   'support@example.com',
@@ -137,7 +137,7 @@ async function notifyFailure(payload) {
     } else if (context.stage === 'verification') {
       // Notify about verification failure
       console.log(`[Notification] Donation verification failed: ${errorMessage}`);
-      
+
       // In production, send notification to donor
       // await emailService.send(
       //   donor,
@@ -145,7 +145,7 @@ async function notifyFailure(payload) {
       //   `We were unable to verify your donation.\n\nError: ${errorMessage}\n\nPlease contact support if you need assistance.`
       // );
     }
-    
+
     console.log('[Notification] Failure notification sent successfully');
   } catch (error) {
     console.error('[Notification] Error sending failure notification:', error.message);
@@ -157,7 +157,7 @@ async function notifyFailure(payload) {
  */
 function register() {
   const events = donationEvents.constructor.EVENTS;
-  
+
   donationEvents.registerHook(events.CREATED, (payload) => {
     // Use async IIFE to handle async operations
     (async () => {
@@ -168,7 +168,7 @@ function register() {
       }
     })();
   });
-  
+
   donationEvents.registerHook(events.SUBMITTED, (payload) => {
     (async () => {
       try {
@@ -178,7 +178,7 @@ function register() {
       }
     })();
   });
-  
+
   donationEvents.registerHook(events.CONFIRMED, (payload) => {
     (async () => {
       try {
@@ -188,7 +188,7 @@ function register() {
       }
     })();
   });
-  
+
   donationEvents.registerHook(events.FAILED, (payload) => {
     (async () => {
       try {
@@ -198,7 +198,7 @@ function register() {
       }
     })();
   });
-  
+
   console.log('Notification hook registered for all donation events');
 }
 

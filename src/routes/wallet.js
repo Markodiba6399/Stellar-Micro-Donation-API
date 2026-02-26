@@ -31,10 +31,10 @@ router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), (req, res) => {
     const sanitizedLabel = label ? sanitizeLabel(label) : null;
     const sanitizedOwnerName = ownerName ? sanitizeName(ownerName) : null;
 
-    const wallet = Wallet.create({ 
-      address, 
-      label: sanitizedLabel, 
-      ownerName: sanitizedOwnerName 
+    const wallet = Wallet.create({
+      address,
+      label: sanitizedLabel,
+      ownerName: sanitizedOwnerName
     });
 
     res.status(201).json({
@@ -76,7 +76,7 @@ router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), (req, res) => {
 router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), (req, res) => {
   try {
     const wallet = Wallet.getById(req.params.id);
-    
+
     if (!wallet) {
       return res.status(404).json({
         error: 'Wallet not found'
@@ -115,7 +115,7 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), (req, res) => 
     if (ownerName !== undefined) updates.ownerName = sanitizeName(ownerName);
 
     const wallet = Wallet.update(req.params.id, updates);
-    
+
     if (!wallet) {
       return res.status(404).json({
         error: 'Wallet not found'
@@ -160,7 +160,7 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
 
     // Get all transactions where user is sender or receiver
     const transactions = await Database.query(
-      `SELECT 
+      `SELECT
         t.id,
         t.senderId,
         t.receiverId,

@@ -13,13 +13,13 @@ try {
  * * Flow & Configuration:
  * 1. Window: 60-second sliding window.
  * 2. Threshold: Max 10 requests.
- * 3. Idempotency Bypass: If a request carries a valid Idempotency Key and the response is 
+ * 3. Idempotency Bypass: If a request carries a valid Idempotency Key and the response is
  * already cached, the 'skip' function returns true, allowing the retry without consuming the quota.
  * 4. Exhaustion: Responds with HTTP 429 and includes 'retryAfter' metadata to guide client retry logic.
  */
 const donationRateLimiter = rateLimit({
-  windowMs: 60 * 1000, 
-  max: 10, 
+  windowMs: 60 * 1000,
+  max: 10,
   message: {
     success: false,
     error: {
@@ -27,8 +27,8 @@ const donationRateLimiter = rateLimit({
       message: 'Too many donation requests. Please try again later.',
     }
   },
-  standardHeaders: true, 
-  legacyHeaders: false, 
+  standardHeaders: true,
+  legacyHeaders: false,
   handler: (req, res) => {
     res.status(429).json({
       success: false,
@@ -40,7 +40,7 @@ const donationRateLimiter = rateLimit({
     });
   },
   /**
-   * Optimization: Do not penalize clients for retrying transactions that have 
+   * Optimization: Do not penalize clients for retrying transactions that have
    * already been processed (Idempotency check).
    */
   skip: (req) => {
@@ -53,14 +53,14 @@ const donationRateLimiter = rateLimit({
  * Intent: Prevent excessive polling of the Stellar Horizon API through our verify endpoint.
  * Scope: Targeted at POST /donations/verify.
  * * Flow & Configuration:
- * 1. Threshold: Higher limit (30 req/min) to accommodate legitimate verification polling 
+ * 1. Threshold: Higher limit (30 req/min) to accommodate legitimate verification polling
  * while still preventing denial-of-service attempts.
- * 2. Header Injection: Returns standard RateLimit headers so frontend clients can implement 
+ * 2. Header Injection: Returns standard RateLimit headers so frontend clients can implement
  * proactive throttling.
  */
 const verificationRateLimiter = rateLimit({
-  windowMs: 60 * 1000, 
-  max: 30, 
+  windowMs: 60 * 1000,
+  max: 30,
   message: {
     success: false,
     error: {

@@ -11,11 +11,11 @@
  */
 function validateRequiredFields(data, requiredFields) {
   const missing = requiredFields.filter(field => !data[field]);
-  
+
   if (missing.length > 0) {
     return { valid: false, missing };
   }
-  
+
   return { valid: true };
 }
 
@@ -27,9 +27,9 @@ function validateRequiredFields(data, requiredFields) {
  */
 function validateNonEmptyString(value, fieldName = 'field') {
   if (!value || typeof value !== 'string' || value.trim().length === 0) {
-    return { 
-      valid: false, 
-      error: `${fieldName} must be a non-empty string` 
+    return {
+      valid: false,
+      error: `${fieldName} must be a non-empty string`
     };
   }
   return { valid: true };
@@ -46,24 +46,24 @@ function validateNonEmptyString(value, fieldName = 'field') {
  */
 function validateInteger(value, options = {}) {
   const { min, max, default: defaultValue } = options;
-  
+
   const parsed = parseInt(value, 10);
-  
+
   if (isNaN(parsed)) {
     if (defaultValue !== undefined) {
       return { valid: true, value: defaultValue };
     }
     return { valid: false, error: 'Must be a valid integer' };
   }
-  
+
   if (min !== undefined && parsed < min) {
     return { valid: false, error: `Must be at least ${min}` };
   }
-  
+
   if (max !== undefined && parsed > max) {
     return { valid: false, error: `Must be at most ${max}` };
   }
-  
+
   return { valid: true, value: parsed };
 }
 
@@ -78,25 +78,25 @@ function validateInteger(value, options = {}) {
  */
 function validateFloat(value, options = {}) {
   const { min, max, allowZero = false } = options;
-  
+
   const parsed = parseFloat(value);
-  
+
   if (isNaN(parsed) || !isFinite(parsed)) {
     return { valid: false, error: 'Must be a valid number' };
   }
-  
+
   if (!allowZero && parsed <= 0) {
     return { valid: false, error: 'Must be greater than 0' };
   }
-  
+
   if (min !== undefined && parsed <= min) {
     return { valid: false, error: `Must be greater than ${min}` };
   }
-  
+
   if (max !== undefined && parsed > max) {
     return { valid: false, error: `Must be at most ${max}` };
   }
-  
+
   return { valid: true, value: parsed };
 }
 
@@ -110,31 +110,31 @@ function validateFloat(value, options = {}) {
  */
 function validateEnum(value, allowedValues, options = {}) {
   const { caseInsensitive = false } = options;
-  
+
   if (!value) {
     return { valid: false, error: 'Value is required' };
   }
-  
+
   let normalizedValue = value;
   let normalizedAllowed = allowedValues;
-  
+
   if (caseInsensitive && typeof value === 'string') {
     normalizedValue = value.toLowerCase();
-    normalizedAllowed = allowedValues.map(v => 
+    normalizedAllowed = allowedValues.map(v =>
       typeof v === 'string' ? v.toLowerCase() : v
     );
   }
-  
+
   if (!normalizedAllowed.includes(normalizedValue)) {
-    return { 
-      valid: false, 
-      error: `Must be one of: ${allowedValues.join(', ')}` 
+    return {
+      valid: false,
+      error: `Must be one of: ${allowedValues.join(', ')}`
     };
   }
-  
-  return { 
-    valid: true, 
-    value: caseInsensitive && typeof value === 'string' ? normalizedValue : value 
+
+  return {
+    valid: true,
+    value: caseInsensitive && typeof value === 'string' ? normalizedValue : value
   };
 }
 
@@ -148,9 +148,9 @@ function validateEnum(value, allowedValues, options = {}) {
  */
 function validateDifferent(value1, value2, field1Name = 'field1', field2Name = 'field2') {
   if (value1 && value2 && value1 === value2) {
-    return { 
-      valid: false, 
-      error: `${field1Name} and ${field2Name} must be different` 
+    return {
+      valid: false,
+      error: `${field1Name} and ${field2Name} must be different`
     };
   }
   return { valid: true };
@@ -167,32 +167,32 @@ function validateDifferent(value1, value2, field1Name = 'field1', field2Name = '
  */
 function validatePagination(limit, offset, options = {}) {
   const { maxLimit = 100, defaultLimit = 10 } = options;
-  
+
   // Validate limit
-  const limitResult = validateInteger(limit, { 
-    min: 1, 
-    max: maxLimit, 
-    default: defaultLimit 
+  const limitResult = validateInteger(limit, {
+    min: 1,
+    max: maxLimit,
+    default: defaultLimit
   });
-  
+
   if (!limitResult.valid) {
     return { valid: false, error: `Invalid limit: ${limitResult.error}` };
   }
-  
+
   // Validate offset
-  const offsetResult = validateInteger(offset, { 
-    min: 0, 
-    default: 0 
+  const offsetResult = validateInteger(offset, {
+    min: 0,
+    default: 0
   });
-  
+
   if (!offsetResult.valid) {
     return { valid: false, error: `Invalid offset: ${offsetResult.error}` };
   }
-  
-  return { 
-    valid: true, 
-    limit: limitResult.value, 
-    offset: offsetResult.value 
+
+  return {
+    valid: true,
+    limit: limitResult.value,
+    offset: offsetResult.value
   };
 }
 

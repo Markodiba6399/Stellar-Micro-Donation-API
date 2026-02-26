@@ -7,7 +7,7 @@ const DB_PATH = path.join(DATA_DIR, 'stellar_donations.db');
 
 /**
  * Migration: Add idempotency constraints to transactions table
- * 
+ *
  * This migration adds:
  * 1. idempotencyKey column with UNIQUE constraint
  * 2. Index on idempotencyKey for fast lookups

@@ -68,7 +68,7 @@ const commands = {
     }
 
     console.log(`\nFound ${keys.length} API key(s):\n`);
-    
+
     keys.forEach(key => {
       console.log(`ID: ${key.id}`);
       console.log(`  Prefix: ${key.key_prefix}`);

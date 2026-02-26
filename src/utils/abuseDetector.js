@@ -10,7 +10,7 @@ class AbuseDetector {
     this.requestCounts = new Map(); // ip -> { count, windowStart }
     this.failureCounts = new Map(); // ip -> { count, windowStart }
     this.suspiciousIPs = new Set();
-    
+
     // Configuration
     this.config = {
       burstThreshold: 100, // requests per window

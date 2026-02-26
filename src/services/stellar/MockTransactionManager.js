@@ -144,7 +144,7 @@ class MockTransactionManager {
     const amountNum = parseFloat(amount);
     const sourceBalance = parseFloat(sourceWallet.balance);
     const baseReserve = parseFloat(this.config.baseReserve);
-    
+
     if (sourceBalance - amountNum < baseReserve) {
       throw new BusinessLogicError(
         ERROR_CODES.TRANSACTION_FAILED,

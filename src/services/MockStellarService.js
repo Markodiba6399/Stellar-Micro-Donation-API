@@ -2,7 +2,7 @@
  * Mock Stellar Service
  * Provides in-memory mock implementation for testing without network calls
  * Simulates Stellar blockchain behavior for development and testing
- * 
+ *
  * LIMITATIONS:
  * - No actual blockchain consensus or validation
  * - No network latency simulation (instant responses)
@@ -12,7 +12,7 @@
  * - Simplified fee structure (no actual fees charged)
  * - No sequence number management
  * - Transaction finality is immediate (no pending states)
- * 
+ *
  * REALISTIC BEHAVIORS SIMULATED:
  * - Account funding requirements (minimum balance)
  * - Insufficient balance errors
@@ -38,7 +38,7 @@ class MockStellarService extends StellarServiceInterface {
     this.wallets = new Map(); // publicKey -> { publicKey, secretKey, balance }
     this.transactions = new Map(); // publicKey -> [transactions]
     this.streamListeners = new Map(); // publicKey -> [callbacks]
-    
+
     // Configuration for realistic behavior simulation
     this.config = {
       // Simulate network delays (ms)
@@ -54,10 +54,10 @@ class MockStellarService extends StellarServiceInterface {
       // Enable strict validation
       strictValidation: config.strictValidation !== false,
     };
-    
+
     // Rate limiting state
     this.requestTimestamps = [];
-    
+
     // Failure simulation state
     this.failureSimulation = {
       enabled: false,
@@ -128,7 +128,7 @@ class MockStellarService extends StellarServiceInterface {
    */
   _simulateFailure() {
     if (!this.failureSimulation.enabled) return;
-    
+
     // Check if we should fail based on probability
     if (Math.random() > this.failureSimulation.probability) {
       this.failureSimulation.consecutiveFailures = 0;
@@ -146,7 +146,7 @@ class MockStellarService extends StellarServiceInterface {
     this.failureSimulation.consecutiveFailures++;
 
     const failureType = this.failureSimulation.type;
-    
+
     switch (failureType) {
       case 'timeout':
         throw new BusinessLogicError(
@@ -154,70 +154,70 @@ class MockStellarService extends StellarServiceInterface {
           'Request timeout - Stellar network may be experiencing high load. Please try again.',
           { retryable: true, retryAfter: 5000 }
         );
-      
+
       case 'network_error':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'Network error: Unable to connect to Stellar Horizon server. Check your connection.',
           { retryable: true, retryAfter: 3000 }
         );
-      
+
       case 'service_unavailable':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'Service temporarily unavailable: Stellar Horizon is under maintenance. Please try again later.',
           { retryable: true, retryAfter: 10000 }
         );
-      
+
       case 'bad_sequence':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'tx_bad_seq: Transaction sequence number does not match source account. This usually indicates a concurrent transaction.',
           { retryable: true, retryAfter: 1000 }
         );
-      
+
       case 'tx_failed':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'tx_failed: Transaction failed due to network congestion or insufficient fee. Please retry with higher fee.',
           { retryable: true, retryAfter: 2000 }
         );
-      
+
       case 'tx_insufficient_fee':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'tx_insufficient_fee: Transaction fee is too low for current network conditions.',
           { retryable: true, retryAfter: 1000 }
         );
-      
+
       case 'connection_refused':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'Connection refused: Unable to establish connection to Stellar network.',
           { retryable: true, retryAfter: 5000 }
         );
-      
+
       case 'rate_limit_horizon':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'Horizon rate limit exceeded: Too many requests to Stellar network. Please slow down.',
           { retryable: true, retryAfter: 60000 }
         );
-      
+
       case 'partial_response':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'Incomplete response from Stellar network. Data may be corrupted.',
           { retryable: true, retryAfter: 2000 }
         );
-      
+
       case 'ledger_closed':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'Ledger already closed: Transaction missed the ledger window. Please resubmit.',
           { retryable: true, retryAfter: 5000 }
         );
-      
+
       default:
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
@@ -246,10 +246,10 @@ class MockStellarService extends StellarServiceInterface {
 
     const now = Date.now();
     const oneSecondAgo = now - 1000;
-    
+
     // Remove old timestamps
     this.requestTimestamps = this.requestTimestamps.filter(ts => ts > oneSecondAgo);
-    
+
     if (this.requestTimestamps.length >= this.config.rateLimit) {
       throw new BusinessLogicError(
         ERROR_CODES.TRANSACTION_FAILED,
@@ -257,7 +257,7 @@ class MockStellarService extends StellarServiceInterface {
         { retryAfter: 1000 }
       );
     }
-    
+
     this.requestTimestamps.push(now);
   }
 
@@ -284,15 +284,15 @@ class MockStellarService extends StellarServiceInterface {
    */
   _validatePublicKey(publicKey) {
     if (!this.config.strictValidation) return;
-    
+
     if (!publicKey || typeof publicKey !== 'string') {
       throw new ValidationError('Public key must be a string');
     }
-    
+
     if (!publicKey.startsWith('G') || publicKey.length !== 56) {
       throw new ValidationError('Invalid Stellar public key format. Must start with G and be 56 characters long.');
     }
-    
+
     if (!/^G[A-Z2-7]{55}$/.test(publicKey)) {
       throw new ValidationError('Invalid Stellar public key format. Contains invalid characters.');
     }
@@ -304,15 +304,15 @@ class MockStellarService extends StellarServiceInterface {
    */
   _validateSecretKey(secretKey) {
     if (!this.config.strictValidation) return;
-    
+
     if (!secretKey || typeof secretKey !== 'string') {
       throw new ValidationError('Secret key must be a string');
     }
-    
+
     if (!secretKey.startsWith('S') || secretKey.length !== 56) {
       throw new ValidationError('Invalid Stellar secret key format. Must start with S and be 56 characters long.');
     }
-    
+
     if (!/^S[A-Z2-7]{55}$/.test(secretKey)) {
       throw new ValidationError('Invalid Stellar secret key format. Contains invalid characters.');
     }
@@ -324,22 +324,22 @@ class MockStellarService extends StellarServiceInterface {
    */
   _validateAmount(amount) {
     if (!this.config.strictValidation) return;
-    
+
     const amountNum = parseFloat(amount);
-    
+
     if (isNaN(amountNum)) {
       throw new ValidationError('Amount must be a valid number');
     }
-    
+
     if (amountNum <= 0) {
       throw new ValidationError('Amount must be greater than zero');
     }
-    
+
     // eslint-disable-next-line no-loss-of-precision -- Stellar's maximum XLM amount
     if (amountNum > 922337203685.4775807) {
       throw new ValidationError('Amount exceeds maximum allowed value (922337203685.4775807 XLM)');
     }
-    
+
     // Check for more than 7 decimal places (Stellar precision)
     const decimalPart = amount.toString().split('.')[1];
     if (decimalPart && decimalPart.length > 7) {
@@ -362,7 +362,7 @@ class MockStellarService extends StellarServiceInterface {
       }
       return key;
     };
-    
+
     return {
       publicKey: generateKey('G'),
       secretKey: generateKey('S'),
@@ -376,9 +376,9 @@ class MockStellarService extends StellarServiceInterface {
   async createWallet() {
     await this._simulateNetworkDelay();
     this._checkRateLimit();
-    
+
     const keypair = this._generateKeypair();
-    
+
     this.wallets.set(keypair.publicKey, {
       publicKey: keypair.publicKey,
       secretKey: keypair.secretKey,
@@ -406,9 +406,9 @@ class MockStellarService extends StellarServiceInterface {
       this._checkRateLimit();
       this._validatePublicKey(publicKey);
       this._simulateFailure(); // New failure simulation
-      
+
       const wallet = this.wallets.get(publicKey);
-      
+
       if (!wallet) {
         throw new NotFoundError(
           `Account not found. The account ${publicKey} does not exist on the network.`,
@@ -435,9 +435,9 @@ class MockStellarService extends StellarServiceInterface {
       this._validatePublicKey(publicKey);
       this._simulateFailure(); // New failure simulation
       this._simulateRandomFailure();
-      
+
       const wallet = this.wallets.get(publicKey);
-      
+
       if (!wallet) {
         throw new NotFoundError(
           `Account not found. The account ${publicKey} does not exist on the network.`,
@@ -473,9 +473,9 @@ class MockStellarService extends StellarServiceInterface {
     await this._simulateNetworkDelay();
     this._checkRateLimit();
     this._validatePublicKey(publicKey);
-    
+
     const wallet = this.wallets.get(publicKey);
-    
+
     if (!wallet) {
       return {
         funded: false,
@@ -486,7 +486,7 @@ class MockStellarService extends StellarServiceInterface {
 
     const balance = parseFloat(wallet.balance);
     const minBalance = parseFloat(this.config.minAccountBalance);
-    
+
     return {
       funded: balance >= minBalance,
       balance: wallet.balance,
@@ -512,7 +512,7 @@ class MockStellarService extends StellarServiceInterface {
       this._validateAmount(amount);
       this._simulateFailure(); // New failure simulation
       this._simulateRandomFailure();
-    
+
     // Find source wallet by secret key
     let sourceWallet = null;
     for (const wallet of this.wallets.values()) {
@@ -551,7 +551,7 @@ class MockStellarService extends StellarServiceInterface {
 
     const amountNum = parseFloat(amount);
     const sourceBalance = parseFloat(sourceWallet.balance);
-    
+
     // Check for sufficient balance (including base reserve)
     const baseReserve = parseFloat(this.config.baseReserve);
     if (sourceBalance - amountNum < baseReserve) {
@@ -565,7 +565,7 @@ class MockStellarService extends StellarServiceInterface {
     // Update balances
     sourceWallet.balance = (sourceBalance - amountNum).toFixed(7);
     destWallet.balance = (destBalance + amountNum).toFixed(7);
-    
+
     // Increment sequence numbers
     sourceWallet.sequence = (parseInt(sourceWallet.sequence) + 1).toString();
 
@@ -618,9 +618,9 @@ class MockStellarService extends StellarServiceInterface {
     await this._simulateNetworkDelay();
     this._checkRateLimit();
     this._validatePublicKey(publicKey);
-    
+
     const wallet = this.wallets.get(publicKey);
-    
+
     if (!wallet) {
       throw new NotFoundError(
         `Account not found. The account ${publicKey} does not exist on the network.`,
@@ -640,11 +640,11 @@ class MockStellarService extends StellarServiceInterface {
   async verifyTransaction(transactionHash) {
     await this._simulateNetworkDelay();
     this._checkRateLimit();
-    
+
     if (!transactionHash || typeof transactionHash !== 'string') {
       throw new ValidationError('Transaction hash must be a valid string');
     }
-    
+
     // Search all transactions for the given hash
     for (const txList of this.transactions.values()) {
       const transaction = txList.find(tx => tx.transactionId === transactionHash);
@@ -683,9 +683,9 @@ class MockStellarService extends StellarServiceInterface {
    */
   streamTransactions(publicKey, onTransaction) {
     this._validatePublicKey(publicKey);
-    
+
     const wallet = this.wallets.get(publicKey);
-    
+
     if (!wallet) {
       throw new NotFoundError(
         `Account not found. The account ${publicKey} does not exist on the network.`,
@@ -747,9 +747,9 @@ class MockStellarService extends StellarServiceInterface {
       this._validateAmount(amount.toString());
       this._simulateFailure(); // New failure simulation
       this._simulateRandomFailure();
-    
+
     let sourceWallet = this.wallets.get(sourcePublicKey);
-    
+
     if (!sourceWallet) {
       // For simulation purposes, create a mock wallet if it doesn't exist
       sourceWallet = {
@@ -778,7 +778,7 @@ class MockStellarService extends StellarServiceInterface {
     const amountNum = parseFloat(amount);
     const sourceBalance = parseFloat(sourceWallet.balance);
     const baseReserve = parseFloat(this.config.baseReserve);
-    
+
     // Check for sufficient balance
     if (sourceBalance - amountNum < baseReserve) {
       throw new BusinessLogicError(

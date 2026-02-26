@@ -78,7 +78,7 @@ function createTransactionsTable(db) {
 function createIndexes(db) {
   return new Promise((resolve, reject) => {
     const createIndexSQL = `
-      CREATE INDEX IF NOT EXISTS idx_transactions_idempotency 
+      CREATE INDEX IF NOT EXISTS idx_transactions_idempotency
       ON transactions(idempotencyKey)
     `;
 

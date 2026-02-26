@@ -1,9 +1,9 @@
 /**
  * Analytics Hook Example
- * 
+ *
  * This hook tracks donation metrics and events for analytics purposes.
  * It demonstrates how to extract and process event data for analytics.
- * 
+ *
  * Usage:
  *   const analyticsHook = require('./hooks/examples/analyticsHook');
  *   analyticsHook.register();
@@ -29,7 +29,7 @@ const analytics = {
  */
 function trackCreation(payload) {
   const { transaction } = payload;
-  
+
   analytics.events.push({
     type: 'donation_created',
     timestamp: payload.timestamp,
@@ -40,10 +40,10 @@ function trackCreation(payload) {
       recipient: transaction.recipient
     }
   });
-  
+
   analytics.metrics.totalDonations++;
   analytics.metrics.totalAmount += transaction.amount;
-  
+
   console.log('[Analytics] Donation created:', {
     id: transaction.id,
     amount: transaction.amount,
@@ -65,7 +65,7 @@ function trackSubmission(payload) {
       transactionId: payload.transactionId
     }
   });
-  
+
   console.log('[Analytics] Donation submitted for verification:', {
     hash: payload.transactionHash
   });
@@ -84,9 +84,9 @@ function trackConfirmation(payload) {
       transactionId: payload.transactionId
     }
   });
-  
+
   analytics.metrics.successfulVerifications++;
-  
+
   console.log('[Analytics] Donation confirmed:', {
     hash: payload.transactionHash,
     totalConfirmed: analytics.metrics.successfulVerifications
@@ -107,13 +107,13 @@ function trackFailure(payload) {
       stage: payload.context.stage
     }
   });
-  
+
   if (payload.context.stage === 'creation') {
     analytics.metrics.creationErrors++;
   } else if (payload.context.stage === 'verification') {
     analytics.metrics.failedVerifications++;
   }
-  
+
   console.log('[Analytics] Donation failed:', {
     errorCode: payload.errorCode,
     stage: payload.context.stage,
@@ -152,7 +152,7 @@ function getRecentEvents(limit = 10) {
  */
 function register() {
   const events = donationEvents.constructor.EVENTS;
-  
+
   donationEvents.registerHook(events.CREATED, (payload) => {
     try {
       trackCreation(payload);
@@ -160,7 +160,7 @@ function register() {
       console.error('Analytics hook error (creation):', error.message);
     }
   });
-  
+
   donationEvents.registerHook(events.SUBMITTED, (payload) => {
     try {
       trackSubmission(payload);
@@ -168,7 +168,7 @@ function register() {
       console.error('Analytics hook error (submission):', error.message);
     }
   });
-  
+
   donationEvents.registerHook(events.CONFIRMED, (payload) => {
     try {
       trackConfirmation(payload);
@@ -176,7 +176,7 @@ function register() {
       console.error('Analytics hook error (confirmation):', error.message);
     }
   });
-  
+
   donationEvents.registerHook(events.FAILED, (payload) => {
     try {
       trackFailure(payload);
@@ -184,7 +184,7 @@ function register() {
       console.error('Analytics hook error (failure):', error.message);
     }
   });
-  
+
   console.log('Analytics hook registered for all donation events');
 }
 

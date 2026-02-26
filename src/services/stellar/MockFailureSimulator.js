@@ -15,7 +15,7 @@ class MockFailureSimulator {
       consecutiveFailures: 0,
       maxConsecutiveFailures: 0,
     };
-    
+
     this.requestTimestamps = [];
   }
 
@@ -90,7 +90,7 @@ class MockFailureSimulator {
    */
   simulateFailure() {
     if (!this.state.enabled) return;
-    
+
     // Check if we should fail based on probability
     if (Math.random() > this.state.probability) {
       this.state.consecutiveFailures = 0;
@@ -108,7 +108,7 @@ class MockFailureSimulator {
     this.state.consecutiveFailures++;
 
     const failureType = this.state.type;
-    
+
     switch (failureType) {
       case 'timeout':
         throw new BusinessLogicError(
@@ -116,70 +116,70 @@ class MockFailureSimulator {
           'Request timeout - Stellar network may be experiencing high load. Please try again.',
           { retryable: true, retryAfter: 5000 }
         );
-      
+
       case 'network_error':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'Network error: Unable to connect to Stellar Horizon server. Check your connection.',
           { retryable: true, retryAfter: 3000 }
         );
-      
+
       case 'service_unavailable':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'Service temporarily unavailable: Stellar Horizon is under maintenance. Please try again later.',
           { retryable: true, retryAfter: 10000 }
         );
-      
+
       case 'bad_sequence':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'tx_bad_seq: Transaction sequence number does not match source account. This usually indicates a concurrent transaction.',
           { retryable: true, retryAfter: 1000 }
         );
-      
+
       case 'tx_failed':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'tx_failed: Transaction failed due to network congestion or insufficient fee. Please retry with higher fee.',
           { retryable: true, retryAfter: 2000 }
         );
-      
+
       case 'tx_insufficient_fee':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'tx_insufficient_fee: Transaction fee is too low for current network conditions.',
           { retryable: true, retryAfter: 1000 }
         );
-      
+
       case 'connection_refused':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'Connection refused: Unable to establish connection to Stellar network.',
           { retryable: true, retryAfter: 5000 }
         );
-      
+
       case 'rate_limit_horizon':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'Horizon rate limit exceeded: Too many requests to Stellar network. Please slow down.',
           { retryable: true, retryAfter: 60000 }
         );
-      
+
       case 'partial_response':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'Incomplete response from Stellar network. Data may be corrupted.',
           { retryable: true, retryAfter: 2000 }
         );
-      
+
       case 'ledger_closed':
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
           'Ledger already closed: Transaction missed the ledger window. Please resubmit.',
           { retryable: true, retryAfter: 5000 }
         );
-      
+
       default:
         throw new BusinessLogicError(
           ERROR_CODES.TRANSACTION_FAILED,
@@ -228,10 +228,10 @@ class MockFailureSimulator {
 
     const now = Date.now();
     const oneSecondAgo = now - 1000;
-    
+
     // Remove old timestamps
     this.requestTimestamps = this.requestTimestamps.filter(ts => ts > oneSecondAgo);
-    
+
     if (this.requestTimestamps.length >= rateLimit) {
       throw new BusinessLogicError(
         ERROR_CODES.TRANSACTION_FAILED,
@@ -239,7 +239,7 @@ class MockFailureSimulator {
         { retryAfter: 1000 }
       );
     }
-    
+
     this.requestTimestamps.push(now);
   }
 }

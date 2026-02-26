@@ -62,12 +62,12 @@ function loadRolesConfig() {
 function getPermissionsByRole(roleName) {
   const config = loadRolesConfig();
   const role = config.roles.find(r => r.name === roleName);
-  
+
   if (!role) {
     log.warn('PERMISSIONS', 'Role not found, returning empty permissions', { roleName });
     return [];
   }
-  
+
   return role.permissions;
 }
 
@@ -79,21 +79,21 @@ function getPermissionsByRole(roleName) {
  */
 function hasPermission(roleName, permission) {
   const permissions = getPermissionsByRole(roleName);
-  
+
   // Admin wildcard check
   if (permissions.includes('*')) {
     return true;
   }
-  
+
   // Exact permission match
   if (permissions.includes(permission)) {
     return true;
   }
-  
+
   // Wildcard permission check (e.g., 'donations:*' matches 'donations:create')
   const [resource] = permission.split(':');
   const wildcardPermission = `${resource}:*`;
-  
+
   return permissions.includes(wildcardPermission);
 }
 

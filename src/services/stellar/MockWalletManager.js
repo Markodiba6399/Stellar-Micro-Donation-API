@@ -21,7 +21,7 @@ class MockWalletManager {
    */
   createWallet() {
     const keypair = StellarValidator.generateKeypair();
-    
+
     this.wallets.set(keypair.publicKey, {
       publicKey: keypair.publicKey,
       secretKey: keypair.secretKey,
@@ -43,7 +43,7 @@ class MockWalletManager {
    */
   getBalance(publicKey) {
     const wallet = this.wallets.get(publicKey);
-    
+
     if (!wallet) {
       throw new NotFoundError(
         `Account not found. The account ${publicKey} does not exist on the network.`,
@@ -64,7 +64,7 @@ class MockWalletManager {
    */
   fundTestnetWallet(publicKey) {
     const wallet = this.wallets.get(publicKey);
-    
+
     if (!wallet) {
       throw new NotFoundError(
         `Account not found. The account ${publicKey} does not exist on the network.`,
@@ -97,7 +97,7 @@ class MockWalletManager {
    */
   isAccountFunded(publicKey) {
     const wallet = this.wallets.get(publicKey);
-    
+
     if (!wallet) {
       return {
         funded: false,
@@ -108,7 +108,7 @@ class MockWalletManager {
 
     const balance = parseFloat(wallet.balance);
     const minBalance = parseFloat(this.config.minAccountBalance);
-    
+
     return {
       funded: balance >= minBalance,
       balance: wallet.balance,

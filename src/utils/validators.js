@@ -11,7 +11,7 @@ const User = require('../routes/models/user');
  */
 const isValidStellarPublicKey = (key) => {
   if (typeof key !== 'string') return false;
-  
+
   // Stellar public keys: start with 'G', 56 chars, alphanumeric
   const stellarPublicKeyRegex = /^G[A-Z2-7]{55}$/;
   return stellarPublicKeyRegex.test(key);
@@ -23,7 +23,7 @@ const isValidStellarPublicKey = (key) => {
  */
 const isValidStellarSecretKey = (key) => {
   if (typeof key !== 'string') return false;
-  
+
   // Stellar secret keys: start with 'S', 56 chars, alphanumeric
   const stellarSecretKeyRegex = /^S[A-Z2-7]{55}$/;
   return stellarSecretKeyRegex.test(key);
@@ -78,15 +78,15 @@ const isValidDate = (dateString) => {
 const isValidDateRange = (startDate, endDate) => {
   const start = new Date(startDate);
   const end = new Date(endDate);
-  
+
   if (isNaN(start.getTime()) || isNaN(end.getTime())) {
     return { valid: false, error: 'Invalid date format' };
   }
-  
+
   if (start > end) {
     return { valid: false, error: 'startDate must be before endDate' };
   }
-  
+
   return { valid: true };
 };
 

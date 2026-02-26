@@ -14,15 +14,15 @@ class StellarValidator {
    */
   static validatePublicKey(publicKey, strict = true) {
     if (!strict) return;
-    
+
     if (!publicKey || typeof publicKey !== 'string') {
       throw new ValidationError('Public key must be a string');
     }
-    
+
     if (!publicKey.startsWith('G') || publicKey.length !== 56) {
       throw new ValidationError('Invalid Stellar public key format. Must start with G and be 56 characters long.');
     }
-    
+
     if (!/^G[A-Z2-7]{55}$/.test(publicKey)) {
       throw new ValidationError('Invalid Stellar public key format. Contains invalid characters.');
     }
@@ -36,15 +36,15 @@ class StellarValidator {
    */
   static validateSecretKey(secretKey, strict = true) {
     if (!strict) return;
-    
+
     if (!secretKey || typeof secretKey !== 'string') {
       throw new ValidationError('Secret key must be a string');
     }
-    
+
     if (!secretKey.startsWith('S') || secretKey.length !== 56) {
       throw new ValidationError('Invalid Stellar secret key format. Must start with S and be 56 characters long.');
     }
-    
+
     if (!/^S[A-Z2-7]{55}$/.test(secretKey)) {
       throw new ValidationError('Invalid Stellar secret key format. Contains invalid characters.');
     }
@@ -58,22 +58,22 @@ class StellarValidator {
    */
   static validateAmount(amount, strict = true) {
     if (!strict) return;
-    
+
     const amountNum = parseFloat(amount);
-    
+
     if (isNaN(amountNum)) {
       throw new ValidationError('Amount must be a valid number');
     }
-    
+
     if (amountNum <= 0) {
       throw new ValidationError('Amount must be greater than zero');
     }
-    
+
     // eslint-disable-next-line no-loss-of-precision -- Stellar's maximum XLM amount
     if (amountNum > 922337203685.4775807) {
       throw new ValidationError('Amount exceeds maximum allowed value (922337203685.4775807 XLM)');
     }
-    
+
     // Check for more than 7 decimal places (Stellar precision)
     const decimalPart = amount.toString().split('.')[1];
     if (decimalPart && decimalPart.length > 7) {
@@ -107,7 +107,7 @@ class StellarValidator {
       }
       return key;
     };
-    
+
     return {
       publicKey: generateKey('G'),
       secretKey: generateKey('S'),

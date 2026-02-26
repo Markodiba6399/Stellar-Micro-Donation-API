@@ -73,7 +73,7 @@ app.get('/health', async (req, res) => {
 // Abuse detection stats endpoint (admin only)
 app.get('/abuse-signals', require('../middleware/rbac').requireAdmin(), (req, res) => {
   const abuseDetector = require('../utils/abuseDetector');
-  
+
   res.json({
     success: true,
     data: abuseDetector.getStats(),
@@ -140,12 +140,12 @@ async function startServer() {
   }
 
   app.listen(PORT, () => {
-    log.info('APP', 'API started', { 
-      port: PORT, 
+    log.info('APP', 'API started', {
+      port: PORT,
       network: config.network,
       healthCheck: `http://localhost:${PORT}/health`
     });
-    
+
     if (log.isDebugMode) {
       log.debug('APP', 'Debug mode enabled - verbose logging active');
       log.debug('APP', 'Configuration loaded', {
@@ -159,7 +159,7 @@ async function startServer() {
 
     // Start the recurring donation scheduler
     recurringDonationScheduler.start();
-    
+
     // Start the transaction reconciliation service
     reconciliationService.start();
   });

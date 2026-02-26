@@ -1,6 +1,6 @@
 /**
  * RequestCounter - Tracks request counts per API key with time window management
- * 
+ *
  * Maintains a sliding window counter for each API key, automatically resetting
  * counts when the time window expires.
  */

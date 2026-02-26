@@ -21,7 +21,7 @@ function validateRolePermissions() {
   // Check for missing roles
   matrixRoles.forEach(roleName => {
     const actualRole = actualRoles.find(r => r.name === roleName);
-    
+
     if (!actualRole) {
       results.errors.push(`Role "${roleName}" defined in matrix but not found in configuration`);
       results.valid = false;
@@ -144,11 +144,11 @@ function validateRBAC(options = {}) {
         errors: results.summary.totalErrors,
         warnings: results.summary.totalWarnings
       });
-      
+
       roleValidation.errors.forEach(error => {
         log.error('RBAC_VALIDATION', error);
       });
-      
+
       routeValidation.errors.forEach(error => {
         log.error('RBAC_VALIDATION', error);
       });
@@ -158,11 +158,11 @@ function validateRBAC(options = {}) {
       log.warn('RBAC_VALIDATION', 'RBAC validation warnings detected', {
         warnings: results.summary.totalWarnings
       });
-      
+
       roleValidation.warnings.forEach(warning => {
         log.warn('RBAC_VALIDATION', warning);
       });
-      
+
       routeValidation.warnings.forEach(warning => {
         log.warn('RBAC_VALIDATION', warning);
       });
@@ -195,7 +195,7 @@ function validateRBAC(options = {}) {
 function getPermissionCoverage() {
   const allPermissions = Object.values(PERMISSIONS);
   const usedPermissions = new Set(ROUTE_PERMISSIONS.map(r => r.permission));
-  
+
   const coverage = {
     total: allPermissions.length,
     used: usedPermissions.size,

@@ -69,7 +69,7 @@ function setContext(context) {
 function buildLogEntry(level, scope, message, meta = {}) {
   const timestamp = new Date().toISOString();
   const context = getContext();
-  
+
   // Sanitize scope and message to prevent log injection
   // eslint-disable-next-line no-control-regex
   const sanitizedScope = typeof scope === 'string' ? scope.replace(/[\x00-\x1F\x7F]/g, '') : scope;
@@ -98,19 +98,19 @@ function buildLogEntry(level, scope, message, meta = {}) {
  */
 function formatMessage(logEntry) {
   const { timestamp, level, scope, message, requestId, transactionId, userId } = logEntry;
-  
+
   // Build context string with available IDs
   const contextParts = [];
   if (requestId) contextParts.push(`reqId=${requestId.substring(0, 8)}`);
   if (transactionId) contextParts.push(`txId=${transactionId.substring(0, 8)}`);
   if (userId) contextParts.push(`userId=${userId}`);
   const contextStr = contextParts.length > 0 ? ` [${contextParts.join(' ')}]` : '';
-  
+
   const base = `[${timestamp}] [${level}] [${scope}]${contextStr} ${message}`;
 
   // Extract metadata (exclude standard fields and context)
-  const metaKeys = Object.keys(logEntry).filter(key => 
-    !['timestamp', 'level', 'scope', 'message', 'serviceName', 'environment', 'version', 
+  const metaKeys = Object.keys(logEntry).filter(key =>
+    !['timestamp', 'level', 'scope', 'message', 'serviceName', 'environment', 'version',
       'requestId', 'transactionId', 'userId', 'walletAddress', 'sessionId'].includes(key)
   );
 

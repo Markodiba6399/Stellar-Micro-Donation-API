@@ -1,7 +1,7 @@
 /**
  * Input Sanitization Utility
  * Sanitizes user-provided metadata to prevent injection attacks and logging issues
- * 
+ *
  * Security Considerations:
  * - Prevents log injection (newlines, control characters)
  * - Prevents SQL injection (handled by parameterized queries, but adds defense in depth)

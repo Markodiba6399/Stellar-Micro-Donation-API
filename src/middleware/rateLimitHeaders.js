@@ -1,6 +1,6 @@
 /**
  * Build standard rate limit HTTP headers
- * 
+ *
  * @param {number} limit - Maximum requests allowed in the time window
  * @param {number} remaining - Number of requests remaining in current window
  * @param {number} resetTime - Unix timestamp (seconds) when the rate limit resets

@@ -17,7 +17,7 @@ class ServiceContainer {
 
     // Initialize other services with their dependencies
     this.idempotencyService = new IdempotencyService();
-    
+
     this.recurringDonationScheduler = new RecurringDonationScheduler(
       this.stellarService
     );

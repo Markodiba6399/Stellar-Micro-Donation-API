@@ -44,7 +44,7 @@ class DonationEvents extends EventEmitter {
    */
   emitLifecycleEvent(eventName, payload) {
     const listeners = this.listeners(eventName);
-    
+
     listeners.forEach((listener, index) => {
       try {
         listener(payload);

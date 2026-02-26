@@ -50,20 +50,20 @@ const ROUTE_PERMISSIONS = [
   { method: 'GET', path: '/donations/recent', permission: PERMISSIONS.DONATIONS_READ },
   { method: 'GET', path: '/donations/:id', permission: PERMISSIONS.DONATIONS_READ },
   { method: 'PATCH', path: '/donations/:id/status', permission: PERMISSIONS.DONATIONS_UPDATE },
-  
+
   // Wallet routes
   { method: 'POST', path: '/wallets', permission: PERMISSIONS.WALLETS_CREATE },
   { method: 'GET', path: '/wallets', permission: PERMISSIONS.WALLETS_READ },
   { method: 'GET', path: '/wallets/:id', permission: PERMISSIONS.WALLETS_READ },
   { method: 'GET', path: '/wallets/:publicKey/transactions', permission: PERMISSIONS.WALLETS_READ },
   { method: 'PATCH', path: '/wallets/:id', permission: PERMISSIONS.WALLETS_UPDATE },
-  
+
   // Stream (recurring donations) routes
   { method: 'POST', path: '/stream/create', permission: PERMISSIONS.STREAM_CREATE },
   { method: 'GET', path: '/stream/schedules', permission: PERMISSIONS.STREAM_READ },
   { method: 'GET', path: '/stream/schedules/:id', permission: PERMISSIONS.STREAM_READ },
   { method: 'DELETE', path: '/stream/schedules/:id', permission: PERMISSIONS.STREAM_DELETE },
-  
+
   // Stats routes
   { method: 'GET', path: '/stats/daily', permission: PERMISSIONS.STATS_READ },
   { method: 'GET', path: '/stats/weekly', permission: PERMISSIONS.STATS_READ },
@@ -72,11 +72,11 @@ const ROUTE_PERMISSIONS = [
   { method: 'GET', path: '/stats/recipients', permission: PERMISSIONS.STATS_READ },
   { method: 'GET', path: '/stats/analytics-fees', permission: PERMISSIONS.STATS_READ },
   { method: 'GET', path: '/stats/wallet/:walletAddress/analytics', permission: PERMISSIONS.STATS_READ },
-  
+
   // Transaction routes
   { method: 'GET', path: '/transactions', permission: PERMISSIONS.TRANSACTIONS_READ },
   { method: 'POST', path: '/transactions/sync', permission: PERMISSIONS.TRANSACTIONS_SYNC },
-  
+
   // Admin-only routes
   { method: 'POST', path: '/api-keys', permission: PERMISSIONS.ADMIN_ALL },
   { method: 'GET', path: '/api-keys', permission: PERMISSIONS.ADMIN_ALL },

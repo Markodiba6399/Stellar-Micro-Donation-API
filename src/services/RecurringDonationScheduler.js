@@ -1,7 +1,7 @@
 /**
  * Recurring Donation Scheduler
  * Automatically processes recurring donation schedules at regular intervals
- * 
+ *
  * Features:
  * - Automatic execution of due donations
  * - Retry logic with exponential backoff
@@ -24,13 +24,13 @@ class RecurringDonationScheduler {
     this.intervalId = null;
     this.isRunning = false;
     this.checkInterval = 60000; // Check every minute
-    
+
     // Retry configuration
     this.maxRetries = 3;
     this.initialBackoffMs = 1000; // 1 second
     this.maxBackoffMs = 30000; // 30 seconds
     this.backoffMultiplier = 2;
-    
+
     // Track in-progress executions to prevent duplicates
     this.executingSchedules = new Set();
   }
@@ -47,10 +47,10 @@ class RecurringDonationScheduler {
     }
 
     this.isRunning = true;
-    
+
     // Run immediately on start
     this.processSchedules();
-    
+
     // Then run at intervals
     this.intervalId = setInterval(() => {
       this.processSchedules();
@@ -88,10 +88,10 @@ class RecurringDonationScheduler {
 
     try {
       const now = new Date().toISOString();
-      
+
       // Find all active schedules that are due for execution
       const dueSchedules = await Database.query(
-        `SELECT 
+        `SELECT
           rd.id,
           rd.donorId,
           rd.recipientId,
@@ -105,7 +105,7 @@ class RecurringDonationScheduler {
          FROM recurring_donations rd
          JOIN users donor ON rd.donorId = donor.id
          JOIN users recipient ON rd.recipientId = recipient.id
-         WHERE rd.status = ? 
+         WHERE rd.status = ?
          AND rd.nextExecutionDate <= ?`,
         [SCHEDULE_STATUS.ACTIVE, now]
       );
@@ -150,7 +150,7 @@ class RecurringDonationScheduler {
 
     try {
       let lastError = null;
-      
+
       for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
         try {
           await this.executeSchedule(schedule);
@@ -163,7 +163,7 @@ class RecurringDonationScheduler {
             maxRetries: this.maxRetries,
             error: error.message,
           });
-          
+
           // Wait before retrying (except on last attempt)
           if (attempt < this.maxRetries) {
             await this.sleep(this.calculateBackoff(attempt));
@@ -222,7 +222,7 @@ class RecurringDonationScheduler {
 
       // Update the schedule
       await Database.run(
-        `UPDATE recurring_donations 
+        `UPDATE recurring_donations
          SET lastExecutionDate = ?,
              nextExecutionDate = ?,
              executionCount = executionCount + 1
@@ -235,7 +235,7 @@ class RecurringDonationScheduler {
         txHash: transactionResult.hash,
         nextExecution: nextExecutionDate.toISOString(),
       });
-      
+
       // Log successful execution
       await this.logExecution(schedule.id, 'SUCCESS', transactionResult.hash);
     } catch (error) {
@@ -260,10 +260,10 @@ class RecurringDonationScheduler {
     const lastExecution = new Date(schedule.lastExecutionDate);
     const now = new Date();
     const timeSinceLastExecution = now - lastExecution;
-    
+
     // Consider "recent" as within the last 5 minutes
     const recentThresholdMs = 5 * 60 * 1000;
-    
+
     return timeSinceLastExecution < recentThresholdMs;
   }
 
@@ -326,12 +326,12 @@ class RecurringDonationScheduler {
    */
   async logFailure(context, schedule, errorMessage) {
     const scheduleId = schedule ? schedule.id : null;
-    const logMessage = schedule 
+    const logMessage = schedule
       ? `Failed to execute schedule ${scheduleId}: ${errorMessage}`
       : `Scheduler error in ${context}: ${errorMessage}`;
-    
+
     log.error('RECURRING_SCHEDULER', logMessage);
-    
+
     if (scheduleId) {
       await this.logExecution(scheduleId, 'FAILED', null, errorMessage);
     }
@@ -348,7 +348,7 @@ class RecurringDonationScheduler {
       this.initialBackoffMs * Math.pow(this.backoffMultiplier, attempt - 1),
       this.maxBackoffMs
     );
-    
+
     // Add jitter to prevent thundering herd
     const jitter = Math.random() * 0.3 * backoff;
     return Math.floor(backoff + jitter);
@@ -372,7 +372,7 @@ class RecurringDonationScheduler {
    */
   calculateNextExecutionDate(currentDate, frequency) {
     const nextDate = new Date(currentDate);
-    
+
     switch (frequency.toLowerCase()) {
       case DONATION_FREQUENCIES.DAILY:
         nextDate.setDate(nextDate.getDate() + 1);
@@ -386,7 +386,7 @@ class RecurringDonationScheduler {
       default:
         throw new Error(`Invalid frequency: ${frequency}`);
     }
-    
+
     return nextDate;
   }
 
@@ -408,9 +408,9 @@ class RecurringDonationScheduler {
   async getExecutionLogs(scheduleId, limit = 10) {
     try {
       const logs = await Database.query(
-        `SELECT * FROM recurring_donation_logs 
-         WHERE scheduleId = ? 
-         ORDER BY timestamp DESC 
+        `SELECT * FROM recurring_donation_logs
+         WHERE scheduleId = ?
+         ORDER BY timestamp DESC
          LIMIT ?`,
         [scheduleId, limit]
       );
