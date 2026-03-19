@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const dbPath = process.env.DB_JSON_PATH || require('path').join(__dirname, '../../data/donations.json');
+const donationEvents = require('../../events/donationEvents');
 const {
   TRANSACTION_STATES,
   normalizeState,
@@ -11,7 +11,7 @@ const {
 class Transaction {
   static eventEmitter = donationEvents;
   static getDbPath() {
-    return dbPath;
+    return process.env.DB_JSON_PATH || path.join(__dirname, '../../../data/donations.json');
   }
 
   static ensureDbDir() {
@@ -67,7 +67,7 @@ class Transaction {
     const nowIso = new Date().toISOString();
     const newTransaction = {
       ...transactionData,
-      id: transactionData.id || Date.now().toString(),
+      id: transactionData.id || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       amount: transactionData.amount,
       donor: transactionData.donor,
       recipient: transactionData.recipient,

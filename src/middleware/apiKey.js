@@ -45,7 +45,7 @@ const requireApiKey = async (req, res, next) => {
     });
 
     // Audit log: Missing API key
-    await AuditLogService.log({
+    AuditLogService.log({
       category: AuditLogService.CATEGORY.AUTHENTICATION,
       action: AuditLogService.ACTION.API_KEY_VALIDATION_FAILED,
       severity: AuditLogService.SEVERITY.HIGH,
@@ -58,7 +58,7 @@ const requireApiKey = async (req, res, next) => {
         userAgent: req.get("User-Agent"),
         method: req.method
       }
-    });
+    }).catch(() => {});
 
     return res.status(401).json({
       success: false,
@@ -79,7 +79,7 @@ const requireApiKey = async (req, res, next) => {
       req.apiKey = keyInfo;
 
       // Audit log: Successful API key validation
-      await AuditLogService.log({
+      AuditLogService.log({
         category: AuditLogService.CATEGORY.AUTHENTICATION,
         action: AuditLogService.ACTION.API_KEY_VALIDATED,
         severity: AuditLogService.SEVERITY.LOW,
@@ -93,7 +93,7 @@ const requireApiKey = async (req, res, next) => {
           isDeprecated: keyInfo.isDeprecated || false,
           keyPrefix: apiKey.substring(0, 8) + '...'
         }
-      });
+      }).catch(() => {});
 
       // Proactive rotation warning for client-side automated systems
       if (keyInfo.isDeprecated) {
@@ -115,7 +115,7 @@ const requireApiKey = async (req, res, next) => {
       });
 
       // Audit log: Legacy key usage
-      await AuditLogService.log({
+      AuditLogService.log({
         category: AuditLogService.CATEGORY.AUTHENTICATION,
         action: AuditLogService.ACTION.LEGACY_KEY_USED,
         severity: AuditLogService.SEVERITY.MEDIUM,
@@ -128,7 +128,7 @@ const requireApiKey = async (req, res, next) => {
           isLegacy: true,
           warning: 'Consider migrating to database-backed keys'
         }
-      });
+      }).catch(() => {});
 
       req.apiKey = {
         role: "user",
@@ -140,7 +140,7 @@ const requireApiKey = async (req, res, next) => {
 
     // Stage 3: Rejection (Key is either invalid, revoked, or expired)
     // Audit log: Invalid API key
-    await AuditLogService.log({
+    AuditLogService.log({
       category: AuditLogService.CATEGORY.AUTHENTICATION,
       action: AuditLogService.ACTION.API_KEY_VALIDATION_FAILED,
       severity: AuditLogService.SEVERITY.HIGH,
@@ -152,7 +152,7 @@ const requireApiKey = async (req, res, next) => {
       details: {
         keyPrefix: apiKey.substring(0, 8) + '...'
       }
-    });
+    }).catch(() => {});
 
     return res.status(401).json({
       success: false,
@@ -162,15 +162,19 @@ const requireApiKey = async (req, res, next) => {
       },
     });
   } catch (error) {
-    // Fail-safe: Ensure database or logic errors don't accidentally leak information
     log.error("API_KEY_AUTH", "Error validating API key", {
       error: error.message,
     });
+    // Fall back to legacy key check on DB error
+    if (legacyKeys.length > 0 && legacyKeys.includes(apiKey)) {
+      req.apiKey = { role: 'user', isLegacy: true };
+      return next();
+    }
     return res.status(500).json({
       success: false,
       error: {
-        code: "INTERNAL_ERROR",
-        message: "Failed to validate API key.",
+        code: 'INTERNAL_ERROR',
+        message: 'An unexpected error occurred during authentication.',
       },
     });
   }

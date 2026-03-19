@@ -41,8 +41,8 @@ exports.checkPermission = (permission) => {
       const userRole = req.user.role || 'guest';
 
       if (!hasPermission(userRole, permission)) {
-        // Audit log: Permission denied
-        await AuditLogService.log({
+        // Audit log: Permission denied (non-fatal)
+        AuditLogService.log({
           category: AuditLogService.CATEGORY.AUTHORIZATION,
           action: AuditLogService.ACTION.PERMISSION_DENIED,
           severity: AuditLogService.SEVERITY.HIGH,
@@ -57,13 +57,13 @@ exports.checkPermission = (permission) => {
             requiredPermission: permission,
             method: req.method
           }
-        });
+        }).catch(() => {});
 
         throw new ForbiddenError(`Insufficient permissions. Required: ${permission}`);
       }
 
-      // Audit log: Permission granted
-      await AuditLogService.log({
+      // Audit log: Permission granted (non-fatal)
+      AuditLogService.log({
         category: AuditLogService.CATEGORY.AUTHORIZATION,
         action: AuditLogService.ACTION.PERMISSION_GRANTED,
         severity: AuditLogService.SEVERITY.LOW,
@@ -77,7 +77,7 @@ exports.checkPermission = (permission) => {
           grantedPermission: permission,
           method: req.method
         }
-      });
+      }).catch(() => {});
 
       next();
     } catch (error) {
@@ -154,7 +154,7 @@ exports.checkAllPermissions = (permissions) => {
  * Flow: Checks req.user.role strictly. Prevents 'guest' or 'user' roles from accessing management endpoints.
  */
 exports.requireAdmin = () => {
-  return async (req, res, next) => {
+  return (req, res, next) => {
     try {
       if (!req.user || req.user.role === 'guest') {
         throw new UnauthorizedError('Authentication required');
@@ -162,7 +162,7 @@ exports.requireAdmin = () => {
 
       if (req.user.role !== 'admin') {
         // Audit log: Admin access denied
-        await AuditLogService.log({
+        AuditLogService.log({
           category: AuditLogService.CATEGORY.AUTHORIZATION,
           action: AuditLogService.ACTION.ADMIN_ACCESS_DENIED,
           severity: AuditLogService.SEVERITY.HIGH,
@@ -176,13 +176,13 @@ exports.requireAdmin = () => {
             userRole: req.user.role,
             method: req.method
           }
-        });
+        }).catch(() => {});
 
         throw new ForbiddenError('Admin access required');
       }
 
       // Audit log: Admin access granted
-      await AuditLogService.log({
+      AuditLogService.log({
         category: AuditLogService.CATEGORY.AUTHORIZATION,
         action: AuditLogService.ACTION.ADMIN_ACCESS_GRANTED,
         severity: AuditLogService.SEVERITY.MEDIUM,
@@ -195,7 +195,7 @@ exports.requireAdmin = () => {
           userRole: req.user.role,
           method: req.method
         }
-      });
+      }).catch(() => {});
 
       next();
     } catch (error) {

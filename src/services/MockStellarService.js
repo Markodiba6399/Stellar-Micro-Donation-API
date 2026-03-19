@@ -44,6 +44,8 @@ class MockStellarService extends StellarServiceInterface {
     this.wallets = new Map(); // publicKey -> { publicKey, secretKey, balance }
     this.transactions = new Map(); // publicKey -> [transactions]
     this.streamListeners = new Map(); // publicKey -> [callbacks]
+    this.network = config.network || 'testnet';
+    this.horizonUrl = config.horizonUrl || 'https://horizon-testnet.stellar.org';
 
     // Configuration for realistic behavior simulation
     this.config = {
@@ -104,6 +106,9 @@ class MockStellarService extends StellarServiceInterface {
   setMaxConsecutiveFailures(max) {
     this.failureSimulation.maxConsecutiveFailures = max;
   }
+
+  getNetwork() { return this.network; }
+  getHorizonUrl() { return this.horizonUrl; }
 
   _isRetryableError(error) {
     return Boolean(error && error.details && error.details.retryable);

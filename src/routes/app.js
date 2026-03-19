@@ -28,6 +28,8 @@ const { initializeApiKeysTable } = require('../models/apiKeys');
 const { validateRBAC } = require('../utils/rbacValidator');
 const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
+const serviceContainer = require('../config/serviceContainer');
+const { payloadSizeLimiter } = require('../middleware/payloadSizeLimit');
 const {
   logStartupDiagnostics,
   logShutdownDiagnostics,
@@ -82,16 +84,19 @@ app.get('/health', async (req, res) => {
     return res.status(200).json({
       status: 'ok',
       timestamp: new Date().toISOString(),
-      dependencies: {
-        database: 'ok'
-      },
+      dependencies: { database: 'ok' },
       services: {
         recurringDonations: recurringDonationScheduler.getStatus(),
         reconciliation: reconciliationService.getStatus()
       }
     });
   } catch (error) {
-    next(error);
+    return res.status(503).json({
+      status: 'degraded',
+      timestamp: new Date().toISOString(),
+      dependencies: { database: 'error' },
+      error: error.message
+    });
   }
 });
 
@@ -193,56 +198,44 @@ const PORT = config.server.port;
 
 async function startServer() {
   try {
-    // Log startup diagnostics first
     await logStartupDiagnostics();
-
-    // Initialize database and API keys
     await Database.initialize();
     await initializeApiKeysTable();
     await validateRBAC();
 
-    const server = app.listen(PORT, async () => {
-      // Start background services
+    const server = app.listen(PORT, () => {
       recurringDonationScheduler.start();
       reconciliationService.start();
-      
-      // Start replay detection cleanup timer
+
       const { startCleanup } = require('../utils/replayDetector');
       const replayConfig = require('../config/replayDetection');
-      replayCleanupTimer = startCleanup(
-        replayDetectionMiddleware.trackingStore,
-        replayConfig
-      );
+      replayCleanupTimer = startCleanup(replayDetectionMiddleware.trackingStore, replayConfig);
 
-  app.listen(PORT, () => {
-    log.info('APP', 'API started', {
-      port: PORT,
-      network: config.network,
-      healthCheck: `http://localhost:${PORT}/health`
-    });
-
-    if (log.isDebugMode) {
-      log.debug('APP', 'Debug mode enabled - verbose logging active');
-      log.debug('APP', 'Configuration loaded', {
+      log.info('APP', 'API started', {
         port: PORT,
-        network: stellarConfig.network,
-        healthCheck: `http://localhost:${PORT}/health`,
-        environment: config.server.env,
+        network: config.network,
+        healthCheck: `http://localhost:${PORT}/health`
       });
+
+      if (log.isDebugMode) {
+        log.debug('APP', 'Debug mode enabled - verbose logging active');
+        log.debug('APP', 'Configuration loaded', {
+          port: PORT,
+          network: stellarConfig.network,
+          healthCheck: `http://localhost:${PORT}/health`,
+          environment: config.server.env,
+        });
+      }
     });
 
-    // Graceful shutdown handling
     const gracefulShutdown = async (signal) => {
       logShutdownDiagnostics(signal);
 
       server.close(() => {
         log.info("SHUTDOWN", "HTTP server closed");
-
-        // Stop background services
         recurringDonationScheduler.stop();
         reconciliationService.stop();
-        
-        // Stop replay detection cleanup timer
+
         if (replayCleanupTimer) {
           clearInterval(replayCleanupTimer);
           log.info("SHUTDOWN", "Replay detection cleanup timer stopped");
@@ -251,16 +244,18 @@ async function startServer() {
         process.exit(0);
       });
 
-      // Force shutdown after 10 seconds
       setTimeout(() => {
         log.error("SHUTDOWN", "Forced shutdown after timeout");
         process.exit(1);
       }, 10000);
     };
 
-    // Start the transaction reconciliation service
-    reconciliationService.start();
-  });
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  } catch (error) {
+    log.error('APP', 'Failed to start server', { error: error.message });
+    process.exit(1);
+  }
 }
 
 if (require.main === module) {

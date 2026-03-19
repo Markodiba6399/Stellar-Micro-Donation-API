@@ -13,6 +13,7 @@ const db = require('../utils/database');
 const log = require('../utils/log');
 const crypto = require('crypto');
 const { sanitizeForLogging } = require('../utils/sanitizer');
+const { maskSensitiveData } = require('../utils/dataMasker');
 
 /**
  * Audit event severity levels
@@ -99,7 +100,11 @@ class AuditLogService {
    * @param {string} params.reason - Reason for failure (optional)
    * @returns {Promise<Object>} Created audit log entry
    */
-  static async log({
+  static async log(params) {
+    return AuditLogService._log(params);
+  }
+
+  static async _log({
     category,
     action,
     severity,
@@ -118,7 +123,7 @@ class AuditLogService {
       }
 
       // Sanitize details to prevent sensitive data leakage
-      const sanitizedDetails = sanitizeForLogging(details);
+      const sanitizedDetails = maskSensitiveData(sanitizeForLogging(details), { showPartial: true });
 
       // Create audit entry
       const auditEntry = {
@@ -139,8 +144,27 @@ class AuditLogService {
       const hash = this.generateHash(auditEntry);
       auditEntry.integrityHash = hash;
 
+      // Ensure audit_logs table exists
+      await db.run(`
+        CREATE TABLE IF NOT EXISTS audit_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp TEXT NOT NULL,
+          category TEXT NOT NULL,
+          action TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          result TEXT NOT NULL,
+          userId TEXT,
+          requestId TEXT,
+          ipAddress TEXT,
+          resource TEXT,
+          reason TEXT,
+          details TEXT,
+          integrityHash TEXT NOT NULL
+        )
+      `);
+
       // Insert into database (immutable)
-      const result = await db.run(
+      const dbResult = await db.run(
         `INSERT INTO audit_logs (
           timestamp, category, action, severity, result,
           userId, requestId, ipAddress, resource, reason,
@@ -177,17 +201,20 @@ class AuditLogService {
       });
 
       return {
-        id: result.lastID,
+        id: dbResult.id,
         ...auditEntry
       };
     } catch (error) {
-      // Critical: Audit logging failure should be logged but not block operations
       log.error('AUDIT_SERVICE', 'Failed to create audit log', {
         error: error.message,
         category,
         action
       });
-      throw error;
+      // Re-throw validation errors, swallow DB errors
+      if (error.message === 'Missing required audit log fields') {
+        throw error;
+      }
+      // Don't re-throw DB errors — audit log failures should never block operations
     }
   }
 

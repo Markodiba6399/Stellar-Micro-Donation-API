@@ -22,8 +22,12 @@ class TransactionSyncService {
    * @param {string} [horizonUrl] - Horizon server URL (optional)
    */
   constructor(stellarService, horizonUrl = HORIZON_URLS.TESTNET) {
-    if (!stellarService) throw new Error('stellarService is required');
-    this.stellarService = stellarService;
+    // Support calling with just a URL string, or no args
+    if (typeof stellarService === 'string') {
+      horizonUrl = stellarService;
+      stellarService = null;
+    }
+    this.stellarService = stellarService || null;
     this.server = new StellarSdk.Horizon.Server(horizonUrl);
   }
 
@@ -36,3 +40,52 @@ class TransactionSyncService {
   async syncWalletTransactions(publicKey) {
     const horizonTxs = await this._fetchHorizonTransactions(publicKey);
     const syncedTxs = [];
+
+    for (const tx of horizonTxs) {
+      const existing = Transaction.getByField('stellarTxId', tx.id);
+      if (!existing) {
+        const newTx = Transaction.create({
+          stellarTxId: tx.id,
+          status: 'confirmed',
+          amount: tx.amount,
+          memo: tx.memo,
+          timestamp: tx.created_at,
+        });
+        syncedTxs.push(newTx);
+      }
+    }
+
+    return { synced: syncedTxs.length, transactions: syncedTxs };
+  }
+
+  async _fetchHorizonTransactions(publicKey) {
+    try {
+      const response = await this.server
+        .transactions()
+        .forAccount(publicKey)
+        .order('desc')
+        .limit(50)
+        .call();
+      return response.records || [];
+    } catch (error) {
+      if (error.response && error.response.status === 404) {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  _extractAmount(tx) {
+    return (tx.operations && tx.operations[0] && tx.operations[0].amount) || '0';
+  }
+
+  _extractSource(tx) {
+    return tx.source_account || null;
+  }
+
+  _extractDestination(tx) {
+    return (tx.operations && tx.operations[0] && tx.operations[0].destination) || tx.source_account || null;
+  }
+}
+
+module.exports = TransactionSyncService;

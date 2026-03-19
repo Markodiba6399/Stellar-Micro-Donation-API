@@ -256,9 +256,11 @@ function validateSchema(schema) {
       return res.status(400).json({
         success: false,
         error: {
-          code: ERROR_CODES.VALIDATION_ERROR,
+          code: ERROR_CODES.VALIDATION_ERROR.code,
           message: 'Schema validation failed',
           details: allErrors,
+          requestId: req.id,
+          timestamp: new Date().toISOString(),
         },
       });
     }

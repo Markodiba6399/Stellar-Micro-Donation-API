@@ -29,6 +29,7 @@ class StellarService extends StellarServiceInterface {
    * @param {string} [config.serviceSecretKey] - Service account secret key
    */
   constructor(config = {}) {
+    super(config);
     this.network = config.network || STELLAR_NETWORKS.TESTNET;
     this.horizonUrl = config.horizonUrl || HORIZON_URLS.TESTNET;
     this.serviceSecretKey = config.serviceSecretKey;
@@ -41,6 +42,14 @@ class StellarService extends StellarServiceInterface {
       submit: config.submitTimeout || TIMEOUT_DEFAULTS.STELLAR_SUBMIT,
       stream: config.streamTimeout || TIMEOUT_DEFAULTS.STELLAR_STREAM,
     };
+  }
+
+  getNetwork() {
+    return this.network;
+  }
+
+  getHorizonUrl() {
+    return this.horizonUrl;
   }
 
   /**

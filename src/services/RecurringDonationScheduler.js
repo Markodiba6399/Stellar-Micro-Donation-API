@@ -25,8 +25,7 @@ class RecurringDonationScheduler {
    * Initializes with default configuration for retry logic and execution tracking
    */
   constructor(stellarService) {
-    if (!stellarService) throw new Error('stellarService is required');
-    this.stellarService = stellarService;
+    this.stellarService = stellarService || null;
     this.intervalId = null;
     this.isRunning = false;
     this.checkInterval = 60000; // Check every minute
@@ -53,25 +52,17 @@ class RecurringDonationScheduler {
     }
 
     this.isRunning = true;
-
-    // Run immediately on start
     this.processSchedules();
 
-    // Then run at intervals
     this.intervalId = setInterval(() => {
       this.processSchedules();
+    }, this.checkInterval);
 
-      // Then run at intervals
-      this.intervalId = setInterval(() => {
-        this.processSchedules();
-      }, this.checkInterval);
-
-      const correlation = getCorrelationSummary();
-      log.info("RECURRING_SCHEDULER", "Scheduler started", {
-        checkIntervalSeconds: this.checkInterval / 1000,
-        correlationId: correlation.correlationId,
-        traceId: correlation.traceId,
-      });
+    const correlation = getCorrelationSummary();
+    log.info("RECURRING_SCHEDULER", "Scheduler started", {
+      checkIntervalSeconds: this.checkInterval / 1000,
+      correlationId: correlation.correlationId,
+      traceId: correlation.traceId,
     });
   }
 
@@ -109,10 +100,11 @@ class RecurringDonationScheduler {
       return;
     }
 
+    const correlation = getCorrelationSummary();
+
     try {
       const now = new Date().toISOString();
 
-      // Find all active schedules that are due for execution
       const dueSchedules = await Database.query(
         `SELECT
           rd.id,
@@ -134,58 +126,26 @@ class RecurringDonationScheduler {
       );
 
       if (dueSchedules.length > 0) {
-        log.info('RECURRING_SCHEDULER', 'Found due schedules for execution', { count: dueSchedules.length });
-      }
-
-      const correlation = getCorrelationSummary();
-
-      try {
-        const now = new Date().toISOString();
-        
-        // Find all active schedules that are due for execution
-        const dueSchedules = await Database.query(
-          `SELECT 
-            rd.id,
-            rd.donorId,
-            rd.recipientId,
-            rd.amount,
-            rd.frequency,
-            rd.nextExecutionDate,
-            rd.executionCount,
-            rd.lastExecutionDate,
-            donor.publicKey as donorPublicKey,
-            recipient.publicKey as recipientPublicKey
-           FROM recurring_donations rd
-           JOIN users donor ON rd.donorId = donor.id
-           JOIN users recipient ON rd.recipientId = recipient.id
-           WHERE rd.status = ? 
-           AND rd.nextExecutionDate <= ?`,
-          [SCHEDULE_STATUS.ACTIVE, now]
-        );
-
-        if (dueSchedules.length > 0) {
-          log.info("RECURRING_SCHEDULER", "Found due schedules for execution", {
-            count: dueSchedules.length,
-            correlationId: correlation.correlationId,
-            traceId: correlation.traceId,
-          });
-        }
-
-        // Process schedules concurrently but with duplicate prevention
-        const promises = dueSchedules
-          .filter((schedule) => !this.executingSchedules.has(schedule.id))
-          .map((schedule) => this.executeScheduleWithRetry(schedule));
-
-        await Promise.allSettled(promises);
-      } catch (error) {
-        log.error("RECURRING_SCHEDULER", "Error processing schedules", {
-          error: error.message,
+        log.info("RECURRING_SCHEDULER", "Found due schedules for execution", {
+          count: dueSchedules.length,
           correlationId: correlation.correlationId,
           traceId: correlation.traceId,
         });
-        this.logFailure("PROCESS_SCHEDULES", null, error.message);
       }
-    });
+
+      const promises = dueSchedules
+        .filter((schedule) => !this.executingSchedules.has(schedule.id))
+        .map((schedule) => this.executeScheduleWithRetry(schedule));
+
+      await Promise.allSettled(promises);
+    } catch (error) {
+      log.error("RECURRING_SCHEDULER", "Error processing schedules", {
+        error: error.message,
+        correlationId: correlation.correlationId,
+        traceId: correlation.traceId,
+      });
+      this.logFailure("PROCESS_SCHEDULES", null, error.message);
+    }
   }
 
   /**
@@ -206,7 +166,6 @@ class RecurringDonationScheduler {
     return withAsyncContext(
       "execute_schedule_with_retry",
       async () => {
-        // Prevent duplicate execution
         if (this.executingSchedules.has(schedule.id)) {
           return;
         }
@@ -214,28 +173,28 @@ class RecurringDonationScheduler {
         this.executingSchedules.add(schedule.id);
         const correlation = getCorrelationSummary();
 
-    try {
-      let lastError = null;
-
-      for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
         try {
-          await this.executeSchedule(schedule);
-          return; // Success
-        } catch (error) {
-          lastError = error;
-          log.error('RECURRING_SCHEDULER', 'Schedule execution failed', {
-            scheduleId: schedule.id,
-            attempt,
-            maxRetries: this.maxRetries,
-            error: error.message,
-          });
+          let lastError = null;
 
-          // Wait before retrying (except on last attempt)
-          if (attempt < this.maxRetries) {
-            await this.sleep(this.calculateBackoff(attempt));
+          for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+            try {
+              await this.executeSchedule(schedule);
+              return;
+            } catch (error) {
+              lastError = error;
+              log.error('RECURRING_SCHEDULER', 'Schedule execution failed', {
+                scheduleId: schedule.id,
+                attempt,
+                maxRetries: this.maxRetries,
+                error: error.message,
+              });
+
+              if (attempt < this.maxRetries) {
+                await this.sleep(this.calculateBackoff(attempt));
+              }
+            }
           }
 
-          // All retries failed
           await this.handleFailedExecution(schedule, lastError);
         } finally {
           this.executingSchedules.delete(schedule.id);
@@ -259,56 +218,51 @@ class RecurringDonationScheduler {
       async () => {
         const correlation = getCorrelationSummary();
 
-      // Send donation on Stellar network
-      const transactionResult = await this.stellarService.sendPayment(
-        schedule.donorPublicKey,
-        schedule.recipientPublicKey,
-        schedule.amount,
-        `Recurring donation (Schedule #${schedule.id})`
-      );
+        try {
+          const transactionResult = await this.stellarService.sendPayment(
+            schedule.donorPublicKey,
+            schedule.recipientPublicKey,
+            schedule.amount,
+            `Recurring donation (Schedule #${schedule.id})`
+          );
 
-      // Record the transaction in the database
-      await Database.run(
-        `INSERT INTO transactions (senderId, receiverId, amount, memo, timestamp)
-         VALUES (?, ?, ?, ?, ?)`,
-        [
-          schedule.donorId,
-          schedule.recipientId,
-          schedule.amount,
-          `Recurring donation (Schedule #${schedule.id})`,
-          new Date().toISOString()
-        ]
-      );
+          await Database.run(
+            `INSERT INTO transactions (senderId, receiverId, amount, memo, timestamp)
+             VALUES (?, ?, ?, ?, ?)`,
+            [
+              schedule.donorId,
+              schedule.recipientId,
+              schedule.amount,
+              `Recurring donation (Schedule #${schedule.id})`,
+              new Date().toISOString()
+            ]
+          );
 
-      // Calculate next execution date
-      const nextExecutionDate = this.calculateNextExecutionDate(
-        new Date(),
-        schedule.frequency
-      );
+          const nextExecutionDate = this.calculateNextExecutionDate(new Date(), schedule.frequency);
 
-      // Update the schedule
-      await Database.run(
-        `UPDATE recurring_donations
-         SET lastExecutionDate = ?,
-             nextExecutionDate = ?,
-             executionCount = executionCount + 1
-         WHERE id = ?`,
-        [new Date().toISOString(), nextExecutionDate.toISOString(), schedule.id]
-      );
+          await Database.run(
+            `UPDATE recurring_donations
+             SET lastExecutionDate = ?,
+                 nextExecutionDate = ?,
+                 executionCount = executionCount + 1
+             WHERE id = ?`,
+            [new Date().toISOString(), nextExecutionDate.toISOString(), schedule.id]
+          );
 
-      log.info('RECURRING_SCHEDULER', 'Donation executed', {
-        scheduleId: schedule.id,
-        txHash: transactionResult.hash,
-        nextExecution: nextExecutionDate.toISOString(),
-      });
+          log.info('RECURRING_SCHEDULER', 'Donation executed', {
+            scheduleId: schedule.id,
+            txHash: transactionResult.hash,
+            nextExecution: nextExecutionDate.toISOString(),
+          });
 
-      // Log successful execution
-      await this.logExecution(schedule.id, 'SUCCESS', transactionResult.hash);
-    } catch (error) {
-      // Log failed execution
-      await this.logExecution(schedule.id, 'FAILED', null, error.message);
-      throw error; // Re-throw for retry logic
-    }
+          await this.logExecution(schedule.id, 'SUCCESS', transactionResult.hash);
+        } catch (error) {
+          await this.logExecution(schedule.id, 'FAILED', null, error.message);
+          throw error;
+        }
+      },
+      { scheduleId: schedule.id },
+    );
   }
 
   /**
@@ -326,14 +280,15 @@ class RecurringDonationScheduler {
           return false;
         }
 
-    const lastExecution = new Date(schedule.lastExecutionDate);
-    const now = new Date();
-    const timeSinceLastExecution = now - lastExecution;
+        const lastExecution = new Date(schedule.lastExecutionDate);
+        const now = new Date();
+        const timeSinceLastExecution = now - lastExecution;
+        const recentThresholdMs = 5 * 60 * 1000;
 
-    // Consider "recent" as within the last 5 minutes
-    const recentThresholdMs = 5 * 60 * 1000;
-
-    return timeSinceLastExecution < recentThresholdMs;
+        return timeSinceLastExecution < recentThresholdMs;
+      },
+      { scheduleId: schedule.id },
+    );
   }
 
   /**
@@ -561,4 +516,9 @@ class RecurringDonationScheduler {
   }
 }
 
-module.exports = RecurringDonationScheduler;
+// Export class for use with `new`, but also export a default instance
+// so tests that expect `require(...)` to return an object work
+const _instance = new RecurringDonationScheduler(null);
+_instance.Class = RecurringDonationScheduler;
+module.exports = _instance;
+module.exports.Class = RecurringDonationScheduler;

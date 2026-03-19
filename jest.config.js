@@ -41,4 +41,5 @@ module.exports = {
   verbose: true,
   testTimeout: 10000,
   setupFiles: ['<rootDir>/tests/setup.js'],
+  globalSetup: '<rootDir>/tests/globalSetup.js',
 };

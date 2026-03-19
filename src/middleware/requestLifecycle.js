@@ -76,7 +76,7 @@ function attachLifecycleTracking(req, res, next) {
 
   // Mark validated stage after middleware chain
   process.nextTick(() => {
-    if (req.lifecycle && !req.lifecycle.stages[LIFECYCLE_STAGES.VALIDATED]) {
+    if (req.lifecycle && !req.lifecycle.stages[LIFECYCLE_STAGES.VALIDATED] && req.markLifecycleStage) {
       req.markLifecycleStage(LIFECYCLE_STAGES.VALIDATED);
     }
   });

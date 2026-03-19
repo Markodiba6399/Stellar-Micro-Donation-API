@@ -9,7 +9,7 @@
  * donor/recipient analytics, and summary reports for business intelligence.
  */
 
-const Transaction = require('../models/transaction');
+const Transaction = require('../routes/models/transaction');
 
 class StatsService {
   /**

@@ -79,6 +79,37 @@ const sanitizeString = (str) => {
   return str.trim();
 };
 
+/**
+ * Check if a wallet/user exists by ID
+ */
+const walletExists = (id) => {
+  if (!id && id !== 0) return false;
+  const User = require('../routes/models/user');
+  const user = User.getById(id);
+  return user !== null && user !== undefined;
+};
+
+/**
+ * Check if a wallet address exists
+ */
+const walletAddressExists = (address) => {
+  if (!address) return false;
+  const User = require('../routes/models/user');
+  const user = User.getByWallet(address);
+  return user !== null && user !== undefined;
+};
+
+/**
+ * Check if a transaction exists by ID
+ */
+const transactionExists = (id) => {
+  if (!id && id !== 0) return false;
+  if (id === 0) return false;
+  const Transaction = require('../routes/models/transaction');
+  const tx = Transaction.getById(id);
+  return tx !== null && tx !== undefined;
+};
+
 module.exports = {
   isValidStellarPublicKey,
   isValidStellarSecretKey,
@@ -86,5 +117,8 @@ module.exports = {
   isValidDate,
   isValidDateRange,
   isValidTransactionHash,
-  sanitizeString
+  sanitizeString,
+  walletExists,
+  walletAddressExists,
+  transactionExists,
 };

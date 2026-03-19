@@ -10,6 +10,7 @@
  */
 
 const { sanitizeForLogging } = require('./sanitizer');
+const { maskSensitiveData } = require('./dataMasker');
 const config = require('../config');
 
 const isDebugMode = config.logging.debugMode;
@@ -110,8 +111,8 @@ function buildLogEntry(level, scope, message, meta = {}) {
     serviceName: STANDARD_FIELDS.SERVICE_NAME,
     environment: STANDARD_FIELDS.ENVIRONMENT,
     version: STANDARD_FIELDS.VERSION,
-    ...context, // Include request context (requestId, userId, etc.)
-    ...meta // Include additional metadata
+    ...context,
+    ...maskSensitiveData(meta)
   };
 
   return logEntry;

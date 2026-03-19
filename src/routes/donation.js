@@ -36,7 +36,6 @@ const verifyDonationSchema = validateSchema({
         type: 'string',
         required: true,
         trim: true,
-        pattern: /^[a-fA-F0-9]{64}$/,
       },
     },
   },
@@ -56,7 +55,7 @@ const sendDonationSchema = validateSchema({
 const createDonationSchema = validateSchema({
   body: {
     fields: {
-      amount: { type: 'number', required: true, min: 0.0000001 },
+      amount: { type: 'numberString', required: true, min: 0.0000001 },
       donor: {
         type: 'string',
         required: false,
@@ -152,8 +151,8 @@ router.post('/verify', verificationRateLimiter, checkPermission(PERMISSIONS.DONA
       data: verification
     });
   } catch (error) {
-    const status = error.status || 500;
-    const code = error.code || 'VERIFICATION_FAILED';
+    const status = error.status || error.statusCode || 500;
+    const code = error.code || error.errorCode || 'VERIFICATION_FAILED';
     const message = error.message || 'Failed to verify transaction';
 
     res.status(status).json({
