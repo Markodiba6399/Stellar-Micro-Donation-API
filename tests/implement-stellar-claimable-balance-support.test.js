@@ -11,8 +11,9 @@
  *     notBefore, notAfter, valid time window, unactivated account auto-creation, _clearAllData
  *
  *  POST /donations/claimable:
- *   - 201 success, 401 no key, 400 empty claimants, 400 missing amount,
- *     400 missing secret, predicate passthrough, insufficient balance error
+ *   - 201 success, balanceId stored in transaction records, 401 no key,
+ *     400 empty claimants, 400 missing amount, 400 missing secret,
+ *     predicate passthrough, insufficient balance error
  *
  *  POST /donations/claimable/:id/claim:
  *   - 200 success, 401 no key, 400 missing secret, double-claim error,
@@ -39,6 +40,7 @@ const MockStellarService = require('../src/services/MockStellarService');
 const { attachUserRole } = require('../src/middleware/rbac');
 const { getStellarService } = require('../src/config/stellar');
 const donationRouter = require('../src/routes/donation');
+const Transaction = require('../src/routes/models/transaction');
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -266,6 +268,7 @@ describe('POST /donations/claimable', () => {
   beforeEach(async () => {
     svc = getStellarService();
     svc._clearAllData();
+    Transaction._clearAllData();
     source = await makeFundedWallet(svc);
     app = buildApp();
   });
@@ -279,6 +282,19 @@ describe('POST /donations/claimable', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.data.balanceId).toBeDefined();
     expect(res.body.data.transactionId).toBeDefined();
+  });
+
+  it('stores balanceId in transaction records', async () => {
+    const res = await request(app)
+      .post('/donations/claimable')
+      .set('x-api-key', 'test-key-claimable')
+      .send({ sourceSecret: source.secretKey, amount: '10', claimants: [{ destination: source.publicKey }] });
+    expect(res.status).toBe(201);
+    const all = Transaction.getAll();
+    const stored = all.find(t => t.balanceId === res.body.data.balanceId);
+    expect(stored).toBeDefined();
+    expect(stored.type).toBe('claimable');
+    expect(stored.stellarTxId).toBe(res.body.data.transactionId);
   });
 
   it('returns 401 without API key', async () => {
@@ -343,6 +359,7 @@ describe('POST /donations/claimable/:id/claim', () => {
   beforeEach(async () => {
     svc = getStellarService();
     svc._clearAllData();
+    Transaction._clearAllData();
     source = await makeFundedWallet(svc);
     claimant = await makeFundedWallet(svc, '1.0000000');
     app = buildApp();

@@ -24,6 +24,7 @@ const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
 
 const { getStellarService } = require('../config/stellar');
 const DonationService = require('../services/DonationService');
+const Transaction = require('./models/transaction');
 const { LIFECYCLE_STAGES } = require('../middleware/requestLifecycle');
 
 const stellarService = getStellarService();
@@ -494,6 +495,18 @@ router.post(
         amount,
         claimants,
         predicate: predicate || null,
+      });
+
+      // Store claimable balance ID in transaction records
+      Transaction.create({
+        amount: parseFloat(amount),
+        donor: claimants[0] && claimants[0].destination,
+        recipient: claimants.map(c => c.destination).join(','),
+        status: 'pending',
+        stellarTxId: result.transactionId,
+        stellarLedger: result.ledger,
+        balanceId: result.balanceId,
+        type: 'claimable',
       });
 
       if (req.markLifecycleStage) req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
