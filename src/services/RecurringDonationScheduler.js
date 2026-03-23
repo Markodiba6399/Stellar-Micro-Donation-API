@@ -31,6 +31,8 @@ class RecurringDonationScheduler {
     this.intervalId = null;
     this.isRunning = false;
     this.checkInterval = 60000; // Check every minute
+    this.cleanupInterval = 60 * 60 * 1000; // Cleanup every hour
+    this.lastCleanupAt = 0;
 
     // Retry configuration
     this.maxRetries = 3;
