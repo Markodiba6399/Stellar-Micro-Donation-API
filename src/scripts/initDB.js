@@ -33,7 +33,10 @@ function createUsersTable(db) {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         publicKey TEXT NOT NULL UNIQUE,
         encryptedSecret TEXT,
-        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        daily_limit REAL DEFAULT NULL,
+        monthly_limit REAL DEFAULT NULL,
+        per_transaction_limit REAL DEFAULT NULL
       )
     `;
 
@@ -59,6 +62,8 @@ function createTransactionsTable(db) {
         memo TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         idempotencyKey TEXT UNIQUE,
+        stellar_tx_id TEXT UNIQUE,
+        is_orphan INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (senderId) REFERENCES users(id),
         FOREIGN KEY (receiverId) REFERENCES users(id)
       )
@@ -177,6 +182,35 @@ function verifyTables(db) {
   });
 }
 
+function createStudentFeeTables(db) {
+  return new Promise((resolve, reject) => {
+    db.serialize(() => {
+      db.run(`CREATE TABLE IF NOT EXISTS student_fees (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        studentId TEXT NOT NULL,
+        description TEXT NOT NULL,
+        totalAmount REAL NOT NULL,
+        paidAmount REAL NOT NULL DEFAULT 0,
+        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`, (err) => { if (err) return reject(err); });
+
+      db.run(`CREATE TABLE IF NOT EXISTS fee_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        feeId INTEGER NOT NULL,
+        amount REAL NOT NULL,
+        note TEXT,
+        paidAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (feeId) REFERENCES student_fees(id)
+      )`, (err) => {
+        if (err) return reject(err);
+        console.log('✓ Created student_fees and fee_payments tables');
+        resolve();
+      });
+    });
+  });
+}
+
 async function main() {
   console.log('Initializing Stellar Micro-Donation API Database...\n');
 
@@ -187,6 +221,7 @@ async function main() {
     await createUsersTable(db);
     await createTransactionsTable(db);
     await createIndexes(db);
+    await createStudentFeeTables(db);
     await insertSampleUsers(db);
     await insertSampleTransactions(db);
     await verifyTables(db);

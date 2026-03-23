@@ -21,11 +21,12 @@ const { donationRateLimiter, verificationRateLimiter } = require('../middleware/
 const { validateRequiredFields, validateFloat, validateInteger } = require('../utils/validationHelpers');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
+const { parseCursorPaginationQuery } = require('../utils/pagination');
 
 const { getStellarService } = require('../config/stellar');
 const DonationService = require('../services/DonationService');
 const { LIFECYCLE_STAGES } = require('../middleware/requestLifecycle');
-
+const federation = require('../utils/federation');
 const stellarService = getStellarService();
 const donationService = new DonationService(stellarService);
 
@@ -221,6 +222,13 @@ router.post('/send', donationRateLimiter, requireIdempotency, sendDonationSchema
       requestId: req.id
     });
 
+    // Inject remaining limit headers if available
+    if (result.remainingLimits) {
+      const { dailyRemaining, monthlyRemaining } = result.remainingLimits;
+      if (dailyRemaining !== null) res.setHeader('X-Donation-Daily-Remaining', dailyRemaining);
+      if (monthlyRemaining !== null) res.setHeader('X-Donation-Monthly-Remaining', monthlyRemaining);
+    }
+
     // Mark processing complete
     if (req.markLifecycleStage) {
       req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
@@ -249,6 +257,11 @@ router.post('/send', donationRateLimiter, requireIdempotency, sendDonationSchema
           message: error.message
         }
       });
+    }
+
+    // Pass business logic and other structured errors to the global error handler
+    if (error.statusCode) {
+      return next(error);
     }
 
     res.status(500).json({
@@ -285,11 +298,17 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, createD
       });
     }
 
+    // Resolve federation address if needed (e.g. alice*example.com → GABC...)
+    let resolvedRecipient = recipient;
+    if (federation.isFederationAddress(recipient)) {
+      resolvedRecipient = await federation.resolveRecipient(recipient);
+    }
+
     // Delegate to service
     const transaction = await donationService.createDonationRecord({
       amount: amountValidation.value,
       donor,
-      recipient,
+      recipient: resolvedRecipient,
       memo,
       idempotencyKey: req.idempotency.key
     });
@@ -320,17 +339,21 @@ router.post('/', donationRateLimiter, requireApiKey, requireIdempotency, createD
  */
 router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
   try {
-    const transactions = donationService.getAllDonations();
+    const pagination = parseCursorPaginationQuery(req.query);
+    const result = donationService.getPaginatedDonations(pagination);
     
     // Mark processing complete
     if (req.markLifecycleStage) {
       req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
     }
+
+    res.setHeader('X-Total-Count', String(result.totalCount));
     
     res.json({
       success: true,
-      data: transactions,
-      count: transactions.length
+      data: result.data,
+      count: result.data.length,
+      meta: result.meta
     });
   } catch (error) {
     next(error);

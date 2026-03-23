@@ -11,10 +11,14 @@
 
 const express = require('express');
 const router = express.Router();
-const { checkPermission } = require('../middleware/rbac');
+const { checkPermission, requireAdmin } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
+const LimitService = require('../services/LimitService');
+const Database = require('../utils/database');
+const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const WalletService = require('../services/WalletService');
 const { validateSchema } = require('../middleware/schemaValidation');
+const { parseCursorPaginationQuery } = require('../utils/pagination');
 
 const walletService = new WalletService();
 const walletCreateSchema = validateSchema({
@@ -120,13 +124,18 @@ router.post('/', checkPermission(PERMISSIONS.WALLETS_CREATE), walletCreateSchema
  * GET /wallets
  * Get all wallets
  */
-router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), (req, res) => {
+router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), (req, res, next) => {
   try {
-    const wallets = walletService.getAllWallets();
+    const pagination = parseCursorPaginationQuery(req.query);
+    const result = walletService.getPaginatedWallets(pagination);
+
+    res.setHeader('X-Total-Count', String(result.totalCount));
+
     res.json({
       success: true,
-      data: wallets,
-      count: wallets.length
+      data: result.data,
+      count: result.data.length,
+      meta: result.meta
     });
   } catch (error) {
     next(error);
@@ -251,6 +260,59 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
       count: result.count,
       message: result.message
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PATCH /wallets/:id/limits
+ * Set per-wallet donation limits (admin only)
+ * Body: { daily_limit, monthly_limit, per_transaction_limit } — all optional, positive number or null
+ */
+router.patch('/:id/limits', requireAdmin(), async (req, res, next) => {
+  try {
+    const userId = parseInt(req.params.id, 10);
+    if (isNaN(userId) || userId < 1) {
+      throw new ValidationError('Invalid wallet ID', null, ERROR_CODES.INVALID_REQUEST);
+    }
+
+    const user = await Database.get('SELECT id FROM users WHERE id = ?', [userId]);
+    if (!user) {
+      throw new NotFoundError('Wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    const { daily_limit, monthly_limit, per_transaction_limit } = req.body;
+    const limits = {};
+
+    for (const [key, val] of Object.entries({ daily_limit, monthly_limit, per_transaction_limit })) {
+      if (val === undefined) continue;
+      if (val !== null && (typeof val !== 'number' || val <= 0 || !isFinite(val))) {
+        throw new ValidationError(
+          `${key} must be a positive number or null`,
+          null,
+          ERROR_CODES.INVALID_AMOUNT
+        );
+      }
+      limits[key] = val;
+    }
+
+    if (Object.keys(limits).length === 0) {
+      throw new ValidationError(
+        'At least one limit field (daily_limit, monthly_limit, per_transaction_limit) is required',
+        null,
+        ERROR_CODES.MISSING_REQUIRED_FIELD
+      );
+    }
+
+    await LimitService.setWalletLimits(userId, limits);
+
+    const updated = await Database.get(
+      'SELECT id, publicKey, daily_limit, monthly_limit, per_transaction_limit FROM users WHERE id = ?',
+      [userId]
+    );
+
+    res.json({ success: true, data: updated });
   } catch (error) {
     next(error);
   }
