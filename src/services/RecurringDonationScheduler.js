@@ -13,6 +13,7 @@
 const MockStellarService = require('./MockStellarService');
 const { SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
 const log = require('../utils/log');
+const { revokeExpiredDeprecatedKeys } = require('../models/apiKeys');
 const {
   withBackgroundContext,
   withAsyncContext,

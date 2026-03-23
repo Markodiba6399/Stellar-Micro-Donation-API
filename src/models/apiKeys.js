@@ -130,6 +130,48 @@ async function revokeApiKey(id) {
   return result.changes > 0;
 }
 
+async function rotateApiKey(oldKeyId, { gracePeriodDays = 30 } = {}) {
+  await initializeApiKeysTable();
+  const oldRow = await db.get(`SELECT * FROM api_keys WHERE id = ?`, [oldKeyId]);
+  if (!oldRow) return null;
+  if (oldRow.status === API_KEY_STATUS.REVOKED) return null;
+
+  const newKey = await createApiKey({
+    name: `${oldRow.name} (rotated)`,
+    role: oldRow.role,
+    createdBy: oldRow.created_by,
+    metadata: oldRow.metadata ? JSON.parse(oldRow.metadata) : {},
+    gracePeriodDays,
+  });
+
+  const now = Date.now();
+  await db.run(
+    `UPDATE api_keys SET status = 'deprecated', deprecated_at = ?, rotated_to_id = ?, grace_period_days = ? WHERE id = ?`,
+    [now, newKey.id, gracePeriodDays, oldKeyId]
+  );
+
+  return {
+    newKey,
+    oldKeyId,
+    deprecatedAt: new Date(now).toISOString(),
+    gracePeriodDays,
+    autoRevokeAt: new Date(now + gracePeriodDays * 24 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
+async function revokeExpiredDeprecatedKeys() {
+  await initializeApiKeysTable();
+  const now = Date.now();
+  const result = await db.run(
+    `UPDATE api_keys SET status = 'revoked', revoked_at = ?
+     WHERE status = 'deprecated'
+       AND deprecated_at IS NOT NULL
+       AND (deprecated_at + (grace_period_days * 86400000)) <= ?`,
+    [now, now]
+  );
+  return result.changes;
+}
+
 async function cleanupOldKeys(retentionDays = 90) {
   await initializeApiKeysTable();
   const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
