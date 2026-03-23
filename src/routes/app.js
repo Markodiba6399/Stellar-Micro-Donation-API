@@ -119,6 +119,28 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
   });
 });
 
+// Idempotency stats endpoint (admin only)
+app.get('/admin/idempotency/stats', require('../middleware/rbac').requireAdmin(), async (req, res) => {
+  try {
+    const IdempotencyService = require('../services/IdempotencyService');
+    const stats = await IdempotencyService.getStats();
+    const oldest = await require('../utils/database').get(
+      `SELECT MIN(createdAt) as oldest FROM idempotency_keys WHERE datetime(expiresAt) > datetime('now')`
+    );
+    return res.json({
+      success: true,
+      data: {
+        ...stats,
+        oldestActiveKeyAge: oldest && oldest.oldest
+          ? Math.floor((Date.now() - new Date(oldest.oldest).getTime()) / 1000)
+          : null,
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: { message: err.message } });
+  }
+});
+
 // Replay detection stats endpoint (admin only)
 app.get('/admin/replay-stats', require('../middleware/rbac').requireAdmin(), (req, res) => {
   try {

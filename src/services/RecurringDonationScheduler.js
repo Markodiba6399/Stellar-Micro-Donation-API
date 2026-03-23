@@ -13,6 +13,7 @@
 const MockStellarService = require('./MockStellarService');
 const { SCHEDULE_STATUS, DONATION_FREQUENCIES } = require('../constants');
 const log = require('../utils/log');
+const IdempotencyService = require('./IdempotencyService');
 const {
   withBackgroundContext,
   withAsyncContext,
@@ -29,6 +30,8 @@ class RecurringDonationScheduler {
     this.intervalId = null;
     this.isRunning = false;
     this.checkInterval = 60000; // Check every minute
+    this.cleanupInterval = 60 * 60 * 1000; // Cleanup every hour
+    this.lastCleanupAt = 0;
 
     // Retry configuration
     this.maxRetries = 3;
@@ -138,6 +141,19 @@ class RecurringDonationScheduler {
         .map((schedule) => this.executeScheduleWithRetry(schedule));
 
       await Promise.allSettled(promises);
+
+      // Hourly idempotency key cleanup
+      if (Date.now() - this.lastCleanupAt >= this.cleanupInterval) {
+        this.lastCleanupAt = Date.now();
+        try {
+          const deleted = await IdempotencyService.cleanupExpired();
+          if (deleted > 0) {
+            log.info('RECURRING_SCHEDULER', `Cleaned up ${deleted} expired idempotency key(s)`);
+          }
+        } catch (err) {
+          log.error('RECURRING_SCHEDULER', 'Failed to clean up idempotency keys', { error: err.message });
+        }
+      }
     } catch (error) {
       log.error("RECURRING_SCHEDULER", "Error processing schedules", {
         error: error.message,
