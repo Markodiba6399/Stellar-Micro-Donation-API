@@ -513,6 +513,36 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
+   * Merge multiple partially-signed XDR envelopes and submit to Stellar.
+   *
+   * Each entry in `signatures` must contain a `signed_xdr` field that is a
+   * base-64 XDR TransactionEnvelope already signed by one signer.  The method
+   * collects all signatures from those envelopes, attaches them to the base
+   * transaction, and submits the result.
+   *
+   * @param {Object}   params
+   * @param {string}   params.transaction_xdr    - Base-64 XDR of the unsigned transaction
+   * @param {string}   params.network_passphrase - Stellar network passphrase
+   * @param {Object[]} params.signatures         - [{signer, signed_xdr}]
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
+  async submitMultiSigTransaction({ transaction_xdr, network_passphrase, signatures }) {
+    return StellarErrorHandler.wrap(async () => {
+      const baseTx = new StellarSdk.Transaction(transaction_xdr, network_passphrase);
+
+      for (const { signed_xdr } of signatures) {
+        const signedTx = new StellarSdk.Transaction(signed_xdr, network_passphrase);
+        for (const sig of signedTx.signatures) {
+          baseTx.signatures.push(sig);
+        }
+      }
+
+      const result = await this._submitTransactionWithNetworkSafety(baseTx);
+      return { transactionId: result.hash, ledger: result.ledger };
+    }, 'submitMultiSigTransaction');
+  }
+
+  /**
    * Claim a claimable balance.
    *
    * @param {Object} params
