@@ -262,6 +262,27 @@ class StellarService extends StellarServiceInterface {
   }
 
   /**
+   * Fund a new account via Friendbot (testnet only).
+   * Retries up to 3 times with exponential backoff on transient errors.
+   * On mainnet, logs a warning and returns { funded: false }.
+   * @param {string} publicKey - Stellar public key
+   * @returns {Promise<{funded: boolean, balance?: string}>}
+   */
+  async fundWithFriendbot(publicKey) {
+    if (this.network !== 'testnet') {
+      log.warn('STELLAR_SERVICE', 'Friendbot funding skipped — not on testnet', { network: this.network, publicKey });
+      return { funded: false };
+    }
+    try {
+      const result = await this.fundTestnetWallet(publicKey);
+      return { funded: true, balance: result.balance };
+    } catch (err) {
+      log.error('STELLAR_SERVICE', 'Friendbot funding failed', { publicKey, error: err.message });
+      return { funded: false, error: err.message };
+    }
+  }
+
+  /**
    * Check if an account is funded on Stellar
    * @param {string} publicKey - Stellar public key
    * @returns {Promise<{funded: boolean, balance: string, exists: boolean}>}
@@ -320,6 +341,41 @@ class StellarService extends StellarServiceInterface {
         ledger: result.ledger,
       };
     }, 'sendDonation');
+  }
+
+  /**
+   * Send multiple payments from the same source in a single multi-operation transaction.
+   * @param {string} sourceSecret - Source account secret key
+   * @param {Array<{destinationPublic: string, amount: string, memo?: string}>} payments
+   * @returns {Promise<{transactionId: string, ledger: number}>}
+   */
+  async sendBatchDonations(sourceSecret, payments) {
+    return StellarErrorHandler.wrap(async () => {
+      const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+      const sourceAccount = await this._executeWithRetry(
+        () => this.server.loadAccount(sourceKeypair.publicKey()),
+        'loadAccountForBatch'
+      );
+
+      const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
+        fee: StellarSdk.BASE_FEE,
+        networkPassphrase: this.network === 'public' ? StellarSdk.Networks.PUBLIC : StellarSdk.Networks.TESTNET,
+      }).setTimeout(30);
+
+      for (const p of payments) {
+        builder.addOperation(StellarSdk.Operation.payment({
+          destination: p.destinationPublic,
+          asset: StellarSdk.Asset.native(),
+          amount: p.amount.toString(),
+        }));
+      }
+
+      const builtTx = builder.build();
+      builtTx.sign(sourceKeypair);
+
+      const result = await this._submitTransactionWithNetworkSafety(builtTx);
+      return { transactionId: result.hash, ledger: result.ledger };
+    }, 'sendBatchDonations');
   }
 
   /**
