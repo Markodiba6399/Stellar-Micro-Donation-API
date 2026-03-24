@@ -19,6 +19,7 @@ const streamRoutes = require('./stream');
 const transactionRoutes = require('./transaction');
 const apiKeysRoutes = require('./apiKeys');
 const feesRoutes = require('./fees');
+const webhooksRoutes = require('./webhooks');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -27,6 +28,7 @@ const replayDetectionMiddleware = require('../middleware/replayDetection');
 const Database = require('../utils/database');
 const HealthCheckService = require('../services/HealthCheckService');
 const { initializeApiKeysTable } = require('../models/apiKeys');
+const WebhookService = require('../services/WebhookService');
 const { validateRBAC } = require('../utils/rbacValidator');
 const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
@@ -88,6 +90,7 @@ app.use('/stream', streamRoutes);
 app.use('/transactions', transactionRoutes);
 app.use('/api-keys', apiKeysRoutes);
 app.use('/fees', feesRoutes);
+app.use('/webhooks', webhooksRoutes);
 
 // Exchange rates endpoint
 app.get('/exchange-rates', async (req, res) => {
@@ -331,6 +334,7 @@ async function startServer() {
     await logStartupDiagnostics();
     await Database.initialize();
     await initializeApiKeysTable();
+    await WebhookService.initTable();
     await validateRBAC();
 
     const server = app.listen(PORT, () => {
