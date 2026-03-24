@@ -342,8 +342,7 @@ router.post('/batch', payloadSizeLimiter(ENDPOINT_LIMITS.batchDonation), batchRa
  */
 router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
   try {
-    const { amount, donor, recipient, memo, memoType } = req.body;
-    const { amount, currency, donor, recipient, memo } = req.body;
+    const { amount, currency, donor, recipient, memo, memoType } = req.body;
 
     // Basic validation
     if (!amount || !recipient) {
@@ -461,27 +460,64 @@ router.get('/fee-estimate', checkPermission(PERMISSIONS.DONATIONS_READ), async (
   }
 });
 
+const listDonationsQuerySchema = validateSchema({
+  query: {
+    allowUnknown: true,
+    fields: {
+      startDate:  { type: 'string',  required: false, nullable: true },
+      endDate:    { type: 'string',  required: false, nullable: true },
+      minAmount:  { type: 'string',  required: false, nullable: true },
+      maxAmount:  { type: 'string',  required: false, nullable: true },
+      status:     { type: 'string',  required: false, nullable: true, enum: ['pending', 'submitted', 'confirmed', 'failed'] },
+      donor:      { type: 'string',  required: false, nullable: true, maxLength: 255 },
+      recipient:  { type: 'string',  required: false, nullable: true, maxLength: 255 },
+      memo:       { type: 'string',  required: false, nullable: true, maxLength: 255 },
+      sortBy:     { type: 'string',  required: false, nullable: true, enum: ['timestamp', 'amount', 'status'] },
+      order:      { type: 'string',  required: false, nullable: true, enum: ['asc', 'desc'] },
+    },
+  },
+});
+
 /**
  * GET /donations
- * Get all donations
+ * Get all donations with optional filtering and search.
+ *
+ * Query parameters:
+ *   - startDate {string}  ISO date; include donations on or after this date
+ *   - endDate   {string}  ISO date; include donations on or before this date
+ *   - minAmount {number}  Minimum donation amount (inclusive)
+ *   - maxAmount {number}  Maximum donation amount (inclusive)
+ *   - status    {string}  Exact status: pending | submitted | confirmed | failed
+ *   - donor     {string}  Case-insensitive substring match on donor
+ *   - recipient {string}  Case-insensitive substring match on recipient
+ *   - memo      {string}  Case-insensitive full-text search on memo
+ *   - sortBy    {string}  Sort field: timestamp (default) | amount | status
+ *   - order     {string}  Sort order: desc (default) | asc
+ *   - cursor, limit, direction  Cursor pagination (see pagination docs)
  */
-router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), (req, res, next) => {
+router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), listDonationsQuerySchema, (req, res, next) => {
   try {
     const pagination = parseCursorPaginationQuery(req.query);
-    const result = donationService.getPaginatedDonations(pagination);
-    
+
+    const { startDate, endDate, minAmount, maxAmount, status, donor, recipient, memo, sortBy, order } = req.query;
+    const filters = { startDate, endDate, minAmount, maxAmount, status, donor, recipient, memo, sortBy, order };
+
+    const result = donationService.getPaginatedDonations(pagination, filters);
+
     // Mark processing complete
     if (req.markLifecycleStage) {
       req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
     }
 
     res.setHeader('X-Total-Count', String(result.totalCount));
-    
+
     res.json({
       success: true,
       data: result.data,
       count: result.data.length,
-      meta: result.meta
+      meta: result.meta,
+      filters: result.appliedFilters,
+      resultCount: result.resultCount,
     });
   } catch (error) {
     next(error);

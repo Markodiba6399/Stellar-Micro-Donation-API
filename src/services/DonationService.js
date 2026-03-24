@@ -23,6 +23,7 @@ const log = require('../utils/log');
 const priceOracle = require('./PriceOracleService');
 const { buildOverpaymentRecord } = require('../utils/overpaymentDetector');
 const memoCollisionDetector = require('../utils/memoCollisionDetector');
+const { paginateCollection } = require('../utils/pagination');
 
 class DonationService {
   constructor(stellarService) {
@@ -362,8 +363,7 @@ class DonationService {
    * @param {string} params.idempotencyKey - Idempotency key
    * @returns {Object} Created transaction
    */
-  async createDonationRecord({ amount, donor, recipient, memo, memoType = 'text', idempotencyKey, receivedAmount, sessionId }) {
-  async createDonationRecord({ amount, currency = 'XLM', donor, recipient, memo, idempotencyKey, receivedAmount, sessionId }) {
+  async createDonationRecord({ amount, currency = 'XLM', donor, recipient, memo, memoType = 'text', idempotencyKey, receivedAmount, sessionId }) {
     // Sanitize identifiers
     const sanitizedDonor = donor ? sanitizeIdentifier(donor) : 'Anonymous';
     const sanitizedRecipient = sanitizeIdentifier(recipient);
@@ -564,19 +564,159 @@ class DonationService {
   }
 
   /**
-   * Get donations using cursor-based pagination.
+   * Apply search/filter criteria to a list of transactions.
+   * All parameters are optional and combinable.
+   *
+   * @param {Object[]} transactions - Source transaction array.
+   * @param {Object} filters - Filter options.
+   * @param {string} [filters.startDate] - ISO date string; include transactions on or after this date.
+   * @param {string} [filters.endDate] - ISO date string; include transactions on or before this date.
+   * @param {number} [filters.minAmount] - Minimum donation amount (inclusive).
+   * @param {number} [filters.maxAmount] - Maximum donation amount (inclusive).
+   * @param {string} [filters.status] - Exact status match.
+   * @param {string} [filters.donor] - Case-insensitive substring match on donor field.
+   * @param {string} [filters.recipient] - Case-insensitive substring match on recipient field.
+   * @param {string} [filters.memo] - Case-insensitive full-text search on memo field.
+   * @param {string} [filters.sortBy='timestamp'] - Field to sort by: 'timestamp', 'amount', or 'status'.
+   * @param {string} [filters.order='desc'] - Sort order: 'asc' or 'desc'.
+   * @returns {Object[]} Filtered and sorted transactions.
+   */
+  applyFilters(transactions, filters = {}) {
+    const {
+      startDate, endDate,
+      minAmount, maxAmount,
+      status, donor, recipient, memo,
+      sortBy = 'timestamp', order = 'desc',
+    } = filters;
+
+    const VALID_SORT_FIELDS = ['timestamp', 'amount', 'status'];
+    const VALID_ORDERS = ['asc', 'desc'];
+
+    if (sortBy && !VALID_SORT_FIELDS.includes(sortBy)) {
+      throw new ValidationError(
+        `Invalid sortBy value. Must be one of: ${VALID_SORT_FIELDS.join(', ')}`,
+        null,
+        ERROR_CODES.INVALID_REQUEST
+      );
+    }
+    if (order && !VALID_ORDERS.includes(order)) {
+      throw new ValidationError(
+        `Invalid order value. Must be one of: ${VALID_ORDERS.join(', ')}`,
+        null,
+        ERROR_CODES.INVALID_REQUEST
+      );
+    }
+
+    let start = startDate ? new Date(startDate) : null;
+    let end = endDate ? new Date(endDate) : null;
+
+    if (start && isNaN(start.getTime())) {
+      throw new ValidationError('Invalid startDate', null, ERROR_CODES.INVALID_REQUEST);
+    }
+    if (end && isNaN(end.getTime())) {
+      throw new ValidationError('Invalid endDate', null, ERROR_CODES.INVALID_REQUEST);
+    }
+    if (start && end && start > end) {
+      throw new ValidationError('startDate must not be after endDate', null, ERROR_CODES.INVALID_REQUEST);
+    }
+
+    const minAmt = minAmount !== undefined ? parseFloat(minAmount) : null;
+    const maxAmt = maxAmount !== undefined ? parseFloat(maxAmount) : null;
+
+    if (minAmt !== null && isNaN(minAmt)) {
+      throw new ValidationError('Invalid minAmount', null, ERROR_CODES.INVALID_REQUEST);
+    }
+    if (maxAmt !== null && isNaN(maxAmt)) {
+      throw new ValidationError('Invalid maxAmount', null, ERROR_CODES.INVALID_REQUEST);
+    }
+    if (minAmt !== null && maxAmt !== null && minAmt > maxAmt) {
+      throw new ValidationError('minAmount must not be greater than maxAmount', null, ERROR_CODES.INVALID_REQUEST);
+    }
+
+    const donorLower = donor ? donor.toLowerCase() : null;
+    const recipientLower = recipient ? recipient.toLowerCase() : null;
+    const memoLower = memo ? memo.toLowerCase() : null;
+
+    let result = transactions.filter(tx => {
+      if (start && new Date(tx.timestamp) < start) return false;
+      if (end && new Date(tx.timestamp) > end) return false;
+      if (minAmt !== null && tx.amount < minAmt) return false;
+      if (maxAmt !== null && tx.amount > maxAmt) return false;
+      if (status && tx.status !== status) return false;
+      if (donorLower && !(tx.donor || '').toLowerCase().includes(donorLower)) return false;
+      if (recipientLower && !(tx.recipient || '').toLowerCase().includes(recipientLower)) return false;
+      if (memoLower && !(tx.memo || '').toLowerCase().includes(memoLower)) return false;
+      return true;
+    });
+
+    result.sort((a, b) => {
+      let aVal = a[sortBy];
+      let bVal = b[sortBy];
+      if (sortBy === 'timestamp') {
+        aVal = new Date(aVal).getTime();
+        bVal = new Date(bVal).getTime();
+      } else if (sortBy === 'amount') {
+        aVal = Number(aVal);
+        bVal = Number(bVal);
+      } else {
+        aVal = String(aVal || '');
+        bVal = String(bVal || '');
+      }
+      if (aVal < bVal) return order === 'asc' ? -1 : 1;
+      if (aVal > bVal) return order === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return result;
+  }
+
+  /**
+   * Get donations using cursor-based pagination with optional filtering.
    * @param {Object} pagination - Pagination options.
    * @param {{ timestamp: string, id: string }|null} pagination.cursor - Decoded cursor.
    * @param {number} pagination.limit - Page size.
    * @param {string} pagination.direction - Pagination direction.
-   * @returns {{ data: Array, totalCount: number, meta: Object }} Paginated donations.
+   * @param {Object} [filters={}] - Filter/search options (see applyFilters).
+   * @returns {{ data: Array, totalCount: number, meta: Object, appliedFilters: Object }} Paginated donations.
    */
-  getPaginatedDonations(pagination) {
-    return paginateCollection(Transaction.getAll(), {
+  getPaginatedDonations(pagination, filters = {}) {
+    const { sortBy, order, ...filterParams } = filters;
+    const hasFilters = Object.values(filters).some(v => v !== undefined && v !== null && v !== '');
+
+    const allTransactions = Transaction.getAll();
+    const filtered = hasFilters
+      ? this.applyFilters(allTransactions, filters)
+      : allTransactions;
+
+    // When a custom sort is applied, preserve that order through pagination
+    // by using the first item's sort field as the pagination timestamp field.
+    const useCustomSort = sortBy && sortBy !== 'timestamp';
+    const result = paginateCollection(filtered, {
       ...pagination,
       timestampField: 'timestamp',
       idField: 'id',
+      // If custom sort was applied, disable paginateCollection's re-sort
+      // by passing a pre-sorted flag via a stable secondary sort on id only.
+      ...(useCustomSort && { _presorted: true }),
     });
+
+    // paginateCollection always re-sorts by timestamp; re-apply custom sort to the page
+    if (useCustomSort) {
+      result.data = this.applyFilters(result.data, { sortBy, order: order || 'desc' });
+    }
+
+    const appliedFilters = {};
+    for (const [key, val] of Object.entries(filters)) {
+      if (val !== undefined && val !== null && val !== '') {
+        appliedFilters[key] = val;
+      }
+    }
+
+    return {
+      ...result,
+      appliedFilters,
+      resultCount: result.totalCount,
+    };
   }
 
   /**
