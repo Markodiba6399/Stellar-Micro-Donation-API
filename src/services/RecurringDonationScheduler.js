@@ -151,6 +151,18 @@ class RecurringDonationScheduler {
       } catch (revokeError) {
         log.error('RECURRING_SCHEDULER', 'Failed to auto-revoke expired API keys', { error: revokeError.message });
       }
+
+      // Run data retention job once per cleanupInterval
+      const now2 = Date.now();
+      if (now2 - this.lastCleanupAt >= this.cleanupInterval) {
+        this.lastCleanupAt = now2;
+        try {
+          const retentionService = require('./RetentionService');
+          await retentionService.runAll();
+        } catch (retentionError) {
+          log.error('RECURRING_SCHEDULER', 'Retention job failed', { error: retentionError.message });
+        }
+      }
     } catch (error) {
       log.error("RECURRING_SCHEDULER", "Error processing schedules", {
         error: error.message,
