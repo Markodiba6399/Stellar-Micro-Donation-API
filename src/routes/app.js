@@ -25,6 +25,7 @@ const retentionAdminRoutes = require('./admin/retention');
 const networkRoutes = require('./network');
 const webhooksRoutes = require('./webhooks');
 const offersRoutes = require('./offers');
+const tagsRoutes = require('./tags');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -124,6 +125,7 @@ app.use('/admin/retention', retentionAdminRoutes);
 app.use('/network', networkRoutes);
 app.use('/webhooks', webhooksRoutes);
 app.use('/offers', offersRoutes);
+app.use('/tags', tagsRoutes);
 
 // Exchange rates endpoint
 app.get('/exchange-rates', async (req, res) => {
