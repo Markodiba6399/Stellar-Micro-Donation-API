@@ -15,11 +15,12 @@ const RecurringDonationScheduler = require('../services/RecurringDonationSchedul
 const TransactionReconciliationService = require('../services/TransactionReconciliationService');
 const IdempotencyService = require('../services/IdempotencyService');
 const TransactionSyncService = require('../services/TransactionSyncService');
+const NetworkStatusService = require('../services/NetworkStatusService');
 
 class ServiceContainer {
   constructor(config = {}) {
     // Determine which stellar service to use based on environment
-    const useMockStellar = config.useMockStellar || process.env.USE_MOCK_STELLAR === 'true';
+    const useMockStellar = config.useMockStellar || process.env.USE_MOCK_STELLAR === 'true' || process.env.MOCK_STELLAR === 'true';
 
     // Initialize Stellar Service (real or mock)
     this.stellarService = useMockStellar
@@ -27,9 +28,9 @@ class ServiceContainer {
       : new StellarService(config.stellar);
 
     // Initialize other services with their dependencies
-    this.idempotencyService = new IdempotencyService();
+    this.idempotencyService = IdempotencyService;
 
-    this.recurringDonationScheduler = new RecurringDonationScheduler(
+    this.recurringDonationScheduler = new RecurringDonationScheduler.Class(
       this.stellarService
     );
 
@@ -40,6 +41,9 @@ class ServiceContainer {
     this.transactionSyncService = new TransactionSyncService(
       this.stellarService
     );
+
+    // Initialize Network Status Service
+    this.networkStatusService = new NetworkStatusService(this.stellarService);
   }
 
   getStellarService() {
@@ -61,12 +65,31 @@ class ServiceContainer {
   getTransactionSyncService() {
     return this.transactionSyncService;
   }
+
+  getNetworkStatusService() {
+    return this.networkStatusService;
+  }
 }
 
-module.exports = new ServiceContainer({
-  useMockStellar: process.env.USE_MOCK_STELLAR === 'true',
-  stellar: {
-    network: process.env.STELLAR_NETWORK || 'testnet',
-    horizonUrl: process.env.HORIZON_URL
+const appConfig = require('./index');
+
+let _instance = null;
+
+function getInstance() {
+  if (!_instance) {
+    _instance = new ServiceContainer({
+      useMockStellar: appConfig.stellar.mockEnabled,
+      stellar: appConfig.stellar
+    });
+  }
+  return _instance;
+}
+
+// Proxy that delegates to lazy instance
+module.exports = new Proxy({}, {
+  get(_, prop) {
+    return typeof getInstance()[prop] === 'function'
+      ? getInstance()[prop].bind(getInstance())
+      : getInstance()[prop];
   }
 });
