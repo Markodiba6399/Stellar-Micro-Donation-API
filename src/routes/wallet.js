@@ -19,7 +19,6 @@ const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors
 const WalletService = require('../services/WalletService');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
-const { sanitizeLabel, sanitizeName } = require('../utils/sanitizer');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 const walletService = new WalletService(require('../config/serviceContainer').getStellarService());
@@ -215,7 +214,7 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSc
  * GET /wallets/:publicKey/transactions
  * Get all transactions (sent and received) for a wallet
  */
-router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), walletPublicKeySchema, async (req, res) => {
+router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ), walletPublicKeySchema, async (req, res, next) => {
   try {
     const { publicKey } = req.params;
 
@@ -266,9 +265,9 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
 
     res.json({
       success: true,
-      data: result.transactions,
-      count: result.count,
-      message: result.message
+      data: formattedTransactions,
+      count: formattedTransactions.length,
+      count: formattedTransactions.length
     });
   } catch (error) {
     next(error);
