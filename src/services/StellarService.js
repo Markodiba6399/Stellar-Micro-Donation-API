@@ -966,6 +966,44 @@ class StellarService extends StellarServiceInterface {
 
 
   /**
+   * Query Horizon for an account and normalise the outcome into a discriminated union.
+   *
+   * This method never throws — all outcomes are returned as plain values so callers
+   * do not need to inspect raw Horizon error shapes.
+   *
+   * @param {string} publicKey - Stellar public key to look up
+   * @returns {Promise<
+   *   { balance: string } |
+   *   { notFound: true } |
+   *   { error: true }
+   * >}
+   *   - `{ balance }` — account exists; `balance` is the native XLM balance string
+   *   - `{ notFound: true }` — Horizon returned 404 (account not yet funded)
+   *   - `{ error: true }` — any other Horizon or network error
+   */
+  async getAccountInfo(publicKey) {
+    try {
+      const account = await this._executeWithRetry(
+        () => this.server.loadAccount(publicKey),
+        'getAccountInfo'
+      );
+      const nativeBalance = account.balances.find(b => b.asset_type === 'native');
+      return { balance: nativeBalance ? nativeBalance.balance : '0' };
+    } catch (error) {
+      const status = error && error.response && error.response.status;
+      if (status === 404) {
+        return { notFound: true };
+      }
+      log.warn('STELLAR_SERVICE', 'getAccountInfo failed with non-404 error', {
+        publicKey,
+        status,
+        error: error.message,
+      });
+      return { error: true };
+    }
+  }
+
+  /**
    * Get the inflation destination for a Stellar account.
    *
    * @param {string} publicKey - Public key of the account to query
