@@ -427,7 +427,7 @@ class StellarService extends StellarServiceInterface {
    * @param {string} [params.memo] - Optional transaction memo (max 28 bytes)
    * @returns {Promise<{transactionId: string, ledger: number}>}
    */
-  async sendDonation({ sourceSecret, destinationPublic, amount, memo = '', memoType = 'text', asset = null }) {
+  async sendDonation({ sourceSecret, destinationPublic, amount, memo = '', memoType = 'text', asset = null, validAfter = 0, validBefore = 0 }) {
     return StellarErrorHandler.wrap(async () => {
       const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
       const sourceAccount = await this._executeWithRetry(
@@ -436,9 +436,19 @@ class StellarService extends StellarServiceInterface {
       );
       const paymentAsset = asset ? toStellarSdkAsset(asset) : StellarSdk.Asset.native();
 
+      // Configure time bounds
+      // In Stellar, 0 means no limit (infinite)
+      // validAfter (minTime) = 0 means minimum time is not restricted
+      // validBefore (maxTime) = 0 means maximum time is not restricted
+      const timebounds = {
+        minTime: String(validAfter || '0'), 
+        maxTime: String(validBefore || '0')
+      };
+
       const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
         fee: this.baseFee,
         networkPassphrase: this.networkPassphrase,
+        timebounds,
       })
         .addOperation(StellarSdk.Operation.payment({
           destination: destinationPublic,
@@ -1034,6 +1044,86 @@ class StellarService extends StellarServiceInterface {
     }, 'setInflationDestination');
   }
 
+   * Append events to the internal event store.
+   * @private
+   * @param {string} contractId
+   * @param {Array} events
+   */
+  _storeEvents(contractId, events) {
+    if (!this._eventStore.has(contractId)) {
+      this._eventStore.set(contractId, []);
+    }
+    this._eventStore.get(contractId).push(...events);
+  }
+
+  /**
+   * Set or update an account data entry on-chain via manageData operation
+   * @param {string} secret - Secret key of the account
+   * @param {string} key - Data entry key (max 64 bytes)
+   * @param {string} value - Data entry value (max 64 bytes), can be base64-encoded string
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async setAccountData(secret, key, value) {
+    return StellarErrorHandler.wrap(async () => {
+      const keypair = StellarSdk.Keypair.fromSecret(secret);
+      const account = await this._executeWithRetry(
+        () => this.server.loadAccount(keypair.publicKey()),
+        'loadAccountForManageData'
+      );
+
+      const transaction = new StellarSdk.TransactionBuilder(account, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.manageData({
+          name: key,
+          value: value,
+        }))
+        .setTimeout(30)
+        .build();
+
+      transaction.sign(keypair);
+      const result = await this._submitTransactionWithNetworkSafety(transaction);
+      return {
+        hash: result.hash,
+        ledger: result.ledger,
+      };
+    }, 'setAccountData');
+  }
+
+  /**
+   * Delete an account data entry by setting its value to null
+   * @param {string} secret - Secret key of the account
+   * @param {string} key - Data entry key to delete
+   * @returns {Promise<{hash: string, ledger: number}>}
+   */
+  async deleteAccountData(secret, key) {
+    return StellarErrorHandler.wrap(async () => {
+      const keypair = StellarSdk.Keypair.fromSecret(secret);
+      const account = await this._executeWithRetry(
+        () => this.server.loadAccount(keypair.publicKey()),
+        'loadAccountForManageDataDelete'
+      );
+
+      const transaction = new StellarSdk.TransactionBuilder(account, {
+        fee: this.baseFee,
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(StellarSdk.Operation.manageData({
+          name: key,
+          value: null, // Explicitly pass null to delete
+        }))
+        .setTimeout(30)
+        .build();
+
+      transaction.sign(keypair);
+      const result = await this._submitTransactionWithNetworkSafety(transaction);
+      return {
+        hash: result.hash,
+        ledger: result.ledger,
+      };
+    }, 'deleteAccountData');
+  }
 }
 
 module.exports = StellarService;

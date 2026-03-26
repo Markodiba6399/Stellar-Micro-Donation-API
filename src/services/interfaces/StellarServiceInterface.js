@@ -106,6 +106,17 @@ class StellarServiceInterface {
   async getInflationDestination(_publicKey) {
     void _publicKey;
     throw new Error('getInflationDestination() must be implemented');
+  async setAccountData(_secret, _key, _value) {
+    void _secret;
+    void _key;
+    void _value;
+    throw new Error('setAccountData() must be implemented');
+  }
+
+  async deleteAccountData(_secret, _key) {
+    void _secret;
+    void _key;
+    throw new Error('deleteAccountData() must be implemented');
   }
 }
 
