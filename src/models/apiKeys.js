@@ -25,18 +25,30 @@ const CREATE_TABLE_SQL = `
     monthly_quota INTEGER,
     quota_used INTEGER NOT NULL DEFAULT 0,
     quota_reset_at INTEGER
+    tenant_id TEXT NOT NULL DEFAULT 'default'
   )
 `;
 
+/**
+ * Ensure the api_keys table exists and all optional columns are present.
+ * Safe to call multiple times (idempotent).
+ */
 async function initializeApiKeysTable() {
   await db.run(CREATE_TABLE_SQL);
-  // Add allowed_ips column to existing tables that predate this feature
-  try {
-    await db.run(`ALTER TABLE api_keys ADD COLUMN allowed_ips TEXT`);
-  } catch (err) {
-    // Ignore "duplicate column name" — column already exists
-    const detail = (err.details && err.details.originalError) || err.message || '';
-    if (!detail.includes('duplicate column')) throw err;
+
+  const optionalColumns = [
+    { name: 'allowed_ips', def: 'TEXT' },
+    { name: 'notification_email', def: 'TEXT' },
+    { name: 'last_expiry_notification_sent_at', def: 'INTEGER' },
+  ];
+
+  for (const col of optionalColumns) {
+    try {
+      await db.run(`ALTER TABLE api_keys ADD COLUMN ${col.name} ${col.def}`);
+    } catch (err) {
+      const detail = (err.details && err.details.originalError) || err.message || '';
+      if (!detail.includes('duplicate column')) throw err;
+    }
   }
   // Add quota columns to existing tables
   try {
@@ -60,11 +72,36 @@ async function initializeApiKeysTable() {
 }
 
 async function createApiKey({ name, role = 'user', expiresInDays, createdBy, metadata = {}, gracePeriodDays = 30, signingRequired = false, allowedIps = null, monthlyQuota = null }) {
+/**
+ * Create a new API key.
+ *
+ * @param {Object} opts
+ * @param {string} opts.name
+ * @param {string} [opts.role='user']
+ * @param {number} [opts.expiresInDays]
+ * @param {string} [opts.createdBy]
+ * @param {Object} [opts.metadata={}]
+ * @param {number} [opts.gracePeriodDays=30]
+ * @param {boolean} [opts.signingRequired=false]
+ * @param {string[]|null} [opts.allowedIps=null]
+ * @param {string|null} [opts.notificationEmail=null] - Email for expiry notifications
+ * @returns {Promise<Object>} Created key info (raw key returned once)
+ */
+async function createApiKey({
+  name,
+  role = 'user',
+  expiresInDays,
+  createdBy,
+  metadata = {},
+  gracePeriodDays = 30,
+  signingRequired = false,
+  allowedIps = null,
+  notificationEmail = null,
+}) {
   await initializeApiKeysTable();
   const rawKey = crypto.randomBytes(32).toString('hex');
   const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
   const keyPrefix = rawKey.substring(0, 8);
-  // Generate a separate secret used only for HMAC signing (never returned after creation)
   const keySecret = crypto.randomBytes(32).toString('hex');
   const now = Date.now();
   const expiresAt = expiresInDays ? now + expiresInDays * 24 * 60 * 60 * 1000 : null;
@@ -77,12 +114,22 @@ async function createApiKey({ name, role = 'user', expiresInDays, createdBy, met
     `INSERT INTO api_keys (key_hash, key_prefix, name, role, status, created_by, metadata, expires_at, created_at, grace_period_days, signing_required, key_secret, allowed_ips, monthly_quota, quota_used, quota_reset_at)
      VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
     [keyHash, keyPrefix, name, role, createdBy || null, JSON.stringify(metadata), expiresAt, now, gracePeriodDays, signingRequired ? 1 : 0, keySecret, allowedIpsJson, monthlyQuota, quotaResetAt]
+    `INSERT INTO api_keys
+       (key_hash, key_prefix, name, role, status, created_by, metadata, expires_at,
+        created_at, grace_period_days, signing_required, key_secret, allowed_ips, notification_email)
+     VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      keyHash, keyPrefix, name, role,
+      createdBy || null, JSON.stringify(metadata), expiresAt,
+      now, gracePeriodDays, signingRequired ? 1 : 0, keySecret,
+      allowedIpsJson, notificationEmail || null,
+    ]
   );
 
   return {
     id: result.id,
     key: rawKey,
-    keySecret,          // returned ONCE at creation; store securely
+    keySecret,
     keyPrefix,
     name,
     role,
@@ -95,9 +142,16 @@ async function createApiKey({ name, role = 'user', expiresInDays, createdBy, met
     monthlyQuota,
     quotaUsed: 0,
     quotaResetAt: quotaResetAt ? new Date(quotaResetAt).toISOString() : null,
+    notificationEmail: notificationEmail || null,
   };
 }
 
+/**
+ * Validate a raw API key and return its metadata, or null if invalid/expired.
+ *
+ * @param {string} rawKey
+ * @returns {Promise<Object|null>}
+ */
 async function validateApiKey(rawKey) {
   await initializeApiKeysTable();
   const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
@@ -133,18 +187,28 @@ async function validateApiKey(rawKey) {
     metadata: row.metadata ? JSON.parse(row.metadata) : {},
     gracePeriodDays: row.grace_period_days || 30,
     createdAt: row.created_at,
+    expiresAt: row.expires_at || null,
     signingRequired: !!row.signing_required,
     keySecret: row.key_secret || null,
     allowedIps: row.allowed_ips ? JSON.parse(row.allowed_ips) : null,
     monthlyQuota: row.monthly_quota,
     quotaUsed: row.quota_used || 0,
     quotaResetAt: row.quota_reset_at,
+    notificationEmail: row.notification_email || null,
   };
 }
 
 // Alias used by apiKey.js middleware
 const validateKey = validateApiKey;
 
+/**
+ * List API keys with optional filters.
+ *
+ * @param {Object} [filters={}]
+ * @param {string} [filters.status]
+ * @param {string} [filters.role]
+ * @returns {Promise<Array>}
+ */
 async function listApiKeys(filters = {}) {
   await initializeApiKeysTable();
   let sql = 'SELECT * FROM api_keys WHERE 1=1';
@@ -166,9 +230,16 @@ async function listApiKeys(filters = {}) {
     expires_at: row.expires_at,
     deprecated_at: row.deprecated_at,
     revoked_at: row.revoked_at,
+    notification_email: row.notification_email || null,
   }));
 }
 
+/**
+ * Deprecate an active API key (marks it for rotation grace period).
+ *
+ * @param {number} id
+ * @returns {Promise<boolean>}
+ */
 async function deprecateApiKey(id) {
   await initializeApiKeysTable();
   const result = await db.run(
@@ -178,6 +249,12 @@ async function deprecateApiKey(id) {
   return result.changes > 0;
 }
 
+/**
+ * Revoke an API key immediately.
+ *
+ * @param {number} id
+ * @returns {Promise<boolean>}
+ */
 async function revokeApiKey(id) {
   await initializeApiKeysTable();
   const result = await db.run(
@@ -187,9 +264,16 @@ async function revokeApiKey(id) {
   return result.changes > 0;
 }
 
+/**
+ * Update mutable fields on an API key.
+ *
+ * @param {number} id
+ * @param {Object} updates
+ * @returns {Promise<boolean>}
+ */
 async function updateApiKey(id, updates = {}) {
   await initializeApiKeysTable();
-  const allowed = ['name', 'role', 'metadata', 'signing_required', 'allowed_ips'];
+  const allowed = ['name', 'role', 'metadata', 'signing_required', 'allowed_ips', 'notification_email'];
   const fields = Object.keys(updates).filter(k => allowed.includes(k));
   if (fields.length === 0) return false;
   const sets = fields.map(f => `${f} = ?`).join(', ');
@@ -202,6 +286,12 @@ async function updateApiKey(id, updates = {}) {
   return result.changes > 0;
 }
 
+/**
+ * Delete revoked keys older than retentionDays.
+ *
+ * @param {number} [retentionDays=90]
+ * @returns {Promise<number>} Number of deleted rows
+ */
 async function cleanupOldKeys(retentionDays = 90) {
   await initializeApiKeysTable();
   const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
@@ -215,6 +305,11 @@ async function cleanupOldKeys(retentionDays = 90) {
 /**
  * Atomically create a new key and deprecate the old one.
  * If new key creation fails, the old key remains active.
+ *
+ * @param {number} oldKeyId
+ * @param {Object} [opts]
+ * @param {number} [opts.gracePeriodDays=30]
+ * @returns {Promise<Object|null>}
  */
 async function rotateApiKey(oldKeyId, { gracePeriodDays = 30 } = {}) {
   await initializeApiKeysTable();
@@ -223,16 +318,15 @@ async function rotateApiKey(oldKeyId, { gracePeriodDays = 30 } = {}) {
   if (!oldRow) return null;
   if (oldRow.status === API_KEY_STATUS.REVOKED) return null;
 
-  // Create the new key first — if this throws, old key is untouched
   const newKey = await createApiKey({
     name: `${oldRow.name} (rotated)`,
     role: oldRow.role,
     createdBy: oldRow.created_by,
     metadata: oldRow.metadata ? JSON.parse(oldRow.metadata) : {},
     gracePeriodDays,
+    notificationEmail: oldRow.notification_email || null,
   });
 
-  // Deprecate old key, set its grace period for auto-revoke, and link it to the new one
   const now = Date.now();
   await db.run(
     `UPDATE api_keys SET status = 'deprecated', deprecated_at = ?, rotated_to_id = ?, grace_period_days = ? WHERE id = ?`,
@@ -251,11 +345,12 @@ async function rotateApiKey(oldKeyId, { gracePeriodDays = 30 } = {}) {
 /**
  * Revoke deprecated keys whose grace period has elapsed.
  * Called by the background scheduler.
+ *
+ * @returns {Promise<number>} Number of revoked keys
  */
 async function revokeExpiredDeprecatedKeys() {
   await initializeApiKeysTable();
   const now = Date.now();
-  // deprecated_at + grace_period_days * ms_per_day <= now
   const result = await db.run(
     `UPDATE api_keys
      SET status = 'revoked', revoked_at = ?
@@ -338,6 +433,59 @@ async function resetExpiredQuotas() {
   );
   
   return result.changes;
+ * Fetch active keys that expire within the given number of days and have not yet
+ * received a notification at this threshold level.
+ *
+ * The deduplication logic uses last_expiry_notification_sent_at which stores the
+ * threshold (e.g. 7 or 1). A key is included when:
+ *   - last_expiry_notification_sent_at IS NULL  (never notified), OR
+ *   - last_expiry_notification_sent_at > withinDays  (only a wider threshold was sent)
+ *
+ * @param {number} withinDays - Look-ahead window in days (e.g. 7 or 1)
+ * @returns {Promise<Array>}
+ */
+async function getKeysExpiringWithin(withinDays) {
+  await initializeApiKeysTable();
+  const now = Date.now();
+  const windowEnd = now + withinDays * 24 * 60 * 60 * 1000;
+
+  const rows = await db.all(
+    `SELECT id, name, key_prefix, expires_at, notification_email,
+            last_expiry_notification_sent_at, metadata
+     FROM api_keys
+     WHERE status = 'active'
+       AND expires_at IS NOT NULL
+       AND expires_at > ?
+       AND expires_at <= ?
+       AND (last_expiry_notification_sent_at IS NULL
+            OR last_expiry_notification_sent_at > ?)`,
+    [now, windowEnd, withinDays]
+  );
+
+  return rows.map(row => ({
+    id: row.id,
+    name: row.name,
+    keyPrefix: row.key_prefix,
+    expiresAt: row.expires_at,
+    notificationEmail: row.notification_email || null,
+    lastExpiryNotificationSentAt: row.last_expiry_notification_sent_at,
+    metadata: row.metadata ? JSON.parse(row.metadata) : {},
+  }));
+}
+
+/**
+ * Record that an expiry notification was sent for a key at a given threshold.
+ * Stores the threshold (days) so we don't re-send the same level.
+ *
+ * @param {number} id - API key ID
+ * @param {number} thresholdDays - The notification threshold (e.g. 7 or 1)
+ * @returns {Promise<void>}
+ */
+async function markExpiryNotificationSent(id, thresholdDays) {
+  await db.run(
+    `UPDATE api_keys SET last_expiry_notification_sent_at = ? WHERE id = ?`,
+    [thresholdDays, id]
+  );
 }
 
 module.exports = {
@@ -349,7 +497,6 @@ module.exports = {
   listApiKeys,
   deprecateApiKey,
   revokeApiKey,
-  updateApiKey,
   cleanupOldKeys,
   rotateApiKey,
   revokeExpiredDeprecatedKeys,
@@ -357,4 +504,6 @@ module.exports = {
   resetQuota,
   resetExpiredQuotas,
   getNextMonthFirstDay,
+  getKeysExpiringWithin,
+  markExpiryNotificationSent,
 };
