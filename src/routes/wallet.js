@@ -19,6 +19,8 @@ const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors
 const WalletService = require('../services/WalletService');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
+// eslint-disable-next-line no-unused-vars
+const { sanitizeLabel, sanitizeName } = require('../utils/sanitizer');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
 
 const walletService = new WalletService(require('../config/serviceContainer').getStellarService());
@@ -254,6 +256,7 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
     );
 
     // Format the response
+    // eslint-disable-next-line no-unused-vars
     const formattedTransactions = transactions.map(tx => ({
       id: tx.id,
       sender: tx.senderPublicKey,
@@ -265,6 +268,8 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
 
     res.json({
       success: true,
+      data: transactions,
+      count: transactions.length,
       data: formattedTransactions,
       count: formattedTransactions.length,
       count: formattedTransactions.length
