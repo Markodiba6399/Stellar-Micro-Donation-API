@@ -143,6 +143,9 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true }));
 
+// Block check for auto-blocked IPs (early security)
+app.use(require('../middleware/blockCheck'));
+
 // Request/Response logging middleware
 app.use(logger.middleware());
 
@@ -259,6 +262,36 @@ app.get('/abuse-signals', require('../middleware/rbac').requireAdmin(), (req, re
     data: abuseDetector.getStats(),
     timestamp: new Date().toISOString()
   });
+});
+
+// Blocked IPs admin endpoints
+app.get('/admin/blocked-ips', require('../middleware/rbac').requireAdmin(), (req, res) => {
+  const abuseDetectionService = require('../services/AbuseDetectionService');
+  res.json({
+    success: true,
+    data: abuseDetectionService.getBlocked(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.delete('/admin/blocked-ips/:ip', require('../middleware/rbac').requireAdmin(), (req, res) => {
+  const abuseDetectionService = require('../services/AbuseDetectionService');
+  const ip = req.params.ip;
+  const unblocked = abuseDetectionService.unblock(ip);
+  if (unblocked) {
+    res.json({
+      success: true,
+      message: 'IP unblocked',
+      ip,
+      timestamp: new Date().toISOString()
+    });
+  } else {
+    res.status(404).json({
+      success: false,
+      error: { code: 'IP_NOT_BLOCKED', message: 'IP not currently blocked' },
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // Suspicious pattern metrics endpoint (admin only)
