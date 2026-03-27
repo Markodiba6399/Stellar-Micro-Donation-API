@@ -11,22 +11,26 @@
 
 const express = require('express');
 const router = express.Router();
+const requireApiKey = require('../middleware/apiKey');
 const { checkPermission, requireAdmin } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const LimitService = require('../services/LimitService');
 const Database = require('../utils/database');
 const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
 const WalletService = require('../services/WalletService');
-const Database = require('../utils/database');
 const { getStellarService } = require('../config/stellar');
 const log = require('../utils/log');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { parseCursorPaginationQuery } = require('../utils/pagination');
+const { validateDataEntry } = require('../middleware/validateDataEntry');
 // eslint-disable-next-line no-unused-vars
 const { sanitizeLabel, sanitizeName } = require('../utils/sanitizer');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { bulkImportRateLimiter } = require('../middleware/rateLimiter');
+const BulkWalletImportService = require('../services/BulkWalletImportService');
 
 const walletService = new WalletService(require('../config/serviceContainer').getStellarService());
+const stellarService = require('../config/serviceContainer').getStellarService();
 const AuditLogService = require('../services/AuditLogService');
 const walletCreateSchema = validateSchema({
   body: {
@@ -175,7 +179,9 @@ router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, as
     if (!wallet) {
       return res.status(404).json({ success: false, error: 'Wallet not found' });
     }
-    res.json({ success: true, data: wallet });
+    const stellarSvc = getStellarService();
+    const homeDomain = await stellarSvc.getHomeDomain(wallet.address || wallet.publicKey).catch(() => null);
+    res.json({ success: true, data: { ...wallet, homeDomain: homeDomain || null } });
   } catch (error) {
     next(error);
   }
@@ -210,6 +216,62 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletUpdateSc
     });
 
     res.json({ success: true, data: wallet });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PATCH /wallets/:id/home-domain
+ * Set the home domain on a wallet's Stellar account.
+ * Body: { domain: string, sourceSecret: string }
+ */
+router.patch('/:id/home-domain', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletIdSchema, async (req, res, next) => {
+  try {
+    const { domain, sourceSecret } = req.body;
+
+    if (!domain || !sourceSecret) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: domain, sourceSecret',
+      });
+    }
+
+    const wallet = await walletService.getWalletById(req.params.id);
+    if (!wallet) {
+      return res.status(404).json({ success: false, error: 'Wallet not found' });
+    }
+
+    const stellarSvc = getStellarService();
+    let result;
+    try {
+      result = await stellarSvc.setHomeDomain(sourceSecret, domain);
+    } catch (err) {
+      if (err && err.name === 'ValidationError') {
+        return next(err);
+      }
+      return res.status(502).json({
+        success: false,
+        error: 'Stellar network error while setting home domain',
+      });
+    }
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: AuditLogService.ACTION.HOME_DOMAIN_UPDATED,
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      userId: req.user && req.user.id,
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${req.params.id}/home-domain`,
+      details: { walletId: req.params.id, homeDomain: domain, txHash: result.hash },
+    });
+
+    return res.json({
+      success: true,
+      data: { homeDomain: domain },
+    });
   } catch (error) {
     next(error);
   }
@@ -472,6 +534,145 @@ router.get('/:publicKey/transactions', checkPermission(PERMISSIONS.WALLETS_READ)
 });
 
 /**
+ * POST /wallets/:id/data
+ * Create or update a data entry on the wallet's Stellar account
+ * Body: { secretKey, key, value }
+ * 
+ * SECURITY WARNING: Data entries are publicly readable on-chain.
+ * Do not store PII, secrets, or sensitive information.
+ */
+router.post('/:id/data', 
+  checkPermission(PERMISSIONS.WALLETS_UPDATE), 
+  walletIdSchema,
+  validateDataEntry,
+  async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const { secretKey, key, value } = req.body;
+
+      if (!secretKey) {
+        throw new ValidationError(
+          'Secret key is required to set data entries',
+          null,
+          ERROR_CODES.MISSING_REQUIRED_FIELD
+        );
+      }
+
+      const result = await walletService.setAccountData(id, secretKey, key, value);
+
+      await AuditLogService.log({
+        category: AuditLogService.CATEGORY.WALLET_OPERATION,
+        action: 'DATA_ENTRY_SET',
+        severity: AuditLogService.SEVERITY.MEDIUM,
+        result: 'SUCCESS',
+        userId: req.user && req.user.id,
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: `/wallets/${id}/data`,
+        details: { walletId: id, key, txHash: result.hash }
+      });
+
+      res.status(201).json({
+        success: true,
+        data: {
+          hash: result.hash,
+          ledger: result.ledger
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * GET /wallets/:id/data
+ * Fetch all current data entries for a wallet from the Stellar network
+ */
+router.get('/:id/data',
+  checkPermission(PERMISSIONS.WALLETS_READ),
+  walletIdSchema,
+  async (req, res, next) => {
+    try {
+      const { id } = req.params;
+
+      const result = await walletService.getAccountData(id);
+
+      res.json({
+        success: true,
+        data: result.entries || {},
+        count: Object.keys(result.entries || {}).length
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
+ * DELETE /wallets/:id/data/:key
+ * Remove a specific data entry from the wallet's Stellar account
+ * Body: { secretKey }
+ * 
+ * Deletion is done by setting the value to null in a manageData operation.
+ */
+router.delete('/:id/data/:key',
+  checkPermission(PERMISSIONS.WALLETS_UPDATE),
+  async (req, res, next) => {
+    try {
+      const { id, key } = req.params;
+      const { secretKey } = req.body;
+
+      // Validate wallet ID
+      const walletId = parseInt(id, 10);
+      if (isNaN(walletId) || walletId < 1) {
+        throw new ValidationError('Invalid wallet ID', null, ERROR_CODES.INVALID_REQUEST);
+      }
+
+      if (!secretKey) {
+        throw new ValidationError(
+          'Secret key is required to delete data entries',
+          null,
+          ERROR_CODES.MISSING_REQUIRED_FIELD
+        );
+      }
+
+      if (!key) {
+        throw new ValidationError(
+          'Data entry key is required',
+          null,
+          ERROR_CODES.MISSING_REQUIRED_FIELD
+        );
+      }
+
+      const result = await walletService.deleteAccountData(walletId, secretKey, key);
+
+      await AuditLogService.log({
+        category: AuditLogService.CATEGORY.WALLET_OPERATION,
+        action: 'DATA_ENTRY_DELETED',
+        severity: AuditLogService.SEVERITY.MEDIUM,
+        result: 'SUCCESS',
+        userId: req.user && req.user.id,
+        requestId: req.id,
+        ipAddress: req.ip,
+        resource: `/wallets/${id}/data/${key}`,
+        details: { walletId: id, key, txHash: result.hash }
+      });
+
+      res.json({
+        success: true,
+        data: {
+          hash: result.hash,
+          ledger: result.ledger
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+/**
  * POST /wallets/:id/merge
  * Merge a wallet into a destination account.
  *
@@ -576,6 +777,59 @@ router.post('/:id/merge', checkPermission(PERMISSIONS.WALLETS_DELETE), async (re
         mergedAt: now,
       },
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ─── Account Set Options ──────────────────────────────────────────────────────
+
+const walletOptionsSchema = validateSchema({
+  params: { fields: { id: { type: 'integerString', required: true } } },
+  body: {
+    fields: {
+      secret:         { type: 'string', required: true },
+      homeDomain:     { type: 'string', required: false, nullable: true, maxLength: 32 },
+      inflationDest:  { type: 'string', required: false, nullable: true },
+      masterWeight:   { type: 'integer', required: false, min: 0, max: 255 },
+      lowThreshold:   { type: 'integer', required: false, min: 0, max: 255 },
+      medThreshold:   { type: 'integer', required: false, min: 0, max: 255 },
+      highThreshold:  { type: 'integer', required: false, min: 0, max: 255 },
+      setFlags:       { type: 'integer', required: false, min: 0 },
+      clearFlags:     { type: 'integer', required: false, min: 0 },
+    },
+  },
+});
+
+/**
+ * PATCH /wallets/:id/options
+ * Set Stellar account options for a custodial wallet.
+ * Validates that AUTH_IMMUTABLE cannot be cleared.
+ * Logs changes to the audit trail.
+ */
+router.patch('/:id/options', checkPermission(PERMISSIONS.WALLETS_UPDATE), walletOptionsSchema, async (req, res, next) => {
+  try {
+    const walletId = parseInt(req.params.id, 10);
+    const { secret, ...options } = req.body;
+
+    const wallet = await Database.get('SELECT * FROM users WHERE id = ?', [walletId]);
+    if (!wallet) throw new NotFoundError(`Wallet ${walletId} not found`);
+
+    const stellar = getStellarService();
+    const result = await stellar.setOptions(secret, options);
+
+    await AuditLogService.log({
+      category: AuditLogService.CATEGORY.WALLET_OPERATION,
+      action: 'WALLET_OPTIONS_SET',
+      severity: AuditLogService.SEVERITY.MEDIUM,
+      result: 'SUCCESS',
+      requestId: req.id,
+      ipAddress: req.ip,
+      resource: `/wallets/${walletId}/options`,
+      details: { walletId, options: Object.keys(options), transactionHash: result.hash },
+    });
+
+    return res.json({ success: true, data: { walletId, transactionHash: result.hash, ledger: result.ledger } });
   } catch (error) {
     next(error);
   }

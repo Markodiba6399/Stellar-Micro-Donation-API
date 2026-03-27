@@ -49,6 +49,19 @@ class StellarServiceInterface {
     throw new Error('buildAndSubmitFeeBumpTransaction() must be implemented');
   }
 
+  /**
+   * Bump an account's sequence number to a specific value.
+   * Useful for invalidating pre-signed transactions (time-locked escrow, etc.).
+   * @param {string} secret - Secret key of the account to bump
+   * @param {string|number} bumpTo - Target sequence number (must be > current)
+   * @returns {Promise<{hash: string, ledger: number, newSequence: string}>}
+   */
+  async bumpSequence(_secret, _bumpTo) {
+    void _secret;
+    void _bumpTo;
+    throw new Error('bumpSequence() must be implemented');
+  }
+
   isValidAddress(address) {
     void address;
     throw new Error('isValidAddress() must be implemented');
@@ -95,6 +108,56 @@ class StellarServiceInterface {
   async estimateFee(_operationCount = 1) {
     void _operationCount;
     throw new Error('estimateFee() must be implemented');
+  }
+
+  async setInflationDestination(_sourceSecret, _destinationPublicKey) {
+    void _sourceSecret;
+    void _destinationPublicKey;
+    throw new Error('setInflationDestination() must be implemented');
+  }
+
+  async getInflationDestination(_publicKey) {
+    void _publicKey;
+    throw new Error('getInflationDestination() must be implemented');
+  }
+
+  async setAccountData(_secret, _key, _value) {
+    void _secret;
+    void _key;
+    void _value;
+    throw new Error('setAccountData() must be implemented');
+  }
+
+  async deleteAccountData(_secret, _key) {
+    void _secret;
+    void _key;
+    throw new Error('deleteAccountData() must be implemented');
+  }
+
+  /**
+   * Set account options (home domain, thresholds, signers, flags).
+   * @param {string} _secret - Account secret key
+   * @param {object} _options - Stellar setOptions fields
+   */
+  async setOptions(_secret, _options) {
+    void _secret;
+    void _options;
+    throw new Error('setOptions() must be implemented');
+  }
+
+  /**
+   * Clawback a custom asset from a holder.
+   * @param {string} _issuerSecret - Issuer secret key
+   * @param {string} _from         - Holder public key
+   * @param {string} _assetCode    - Asset code
+   * @param {string} _amount       - Amount to clawback
+   */
+  async clawback(_issuerSecret, _from, _assetCode, _amount) {
+    void _issuerSecret;
+    void _from;
+    void _assetCode;
+    void _amount;
+    throw new Error('clawback() must be implemented');
   }
 }
 

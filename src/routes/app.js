@@ -27,14 +27,17 @@ const featureFlagsAdminRoutes = require('./admin/featureFlags');
 const createFeeBumpRouter = require('./admin/feeBump');
 const dbAdminRoutes = require('./admin/db');
 const retentionAdminRoutes = require('./admin/retention');
+const backupAdminRoutes = require('./admin/backup');
 const matchingProgramsAdminRoutes = require('./admin/matchingPrograms');
+const routingAdminRoutes = require('./admin/routing');
+const impactMetricsAdminRoutes = require('./admin/impactMetrics');
 const networkRoutes = require('./network');
 const webhooksRoutes = require('./webhooks');
 const campaignsRoutes = require('./campaigns');
+const tiersRoutes = require('./tiers');
 const offersRoutes = require('./offers');
 const tagsRoutes = require('./tags');
 const leaderboardRoutes = require('./leaderboard');
-const authRoutes = require('./auth');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -54,6 +57,7 @@ const { responseFormatterMiddleware } = require('../utils/responseFormatter');
 const trackQuotaUsage = require('../middleware/quotaTracker');
 const { startQuotaResetJob } = require('../jobs/quotaResetJob');
 const { createDeduplicationMiddleware } = require('../middleware/deduplication');
+const { fieldFilterMiddleware } = require('../middleware/fieldFilter');
 const {
   logStartupDiagnostics,
   logShutdownDiagnostics,
@@ -137,6 +141,9 @@ app.use(helmet({
 // CORS (must be before body parsers and route handlers)
 app.use(createCorsMiddleware());
 
+// Geographic IP blocking (must be before body parsers)
+app.use(require('../middleware/geoBlock'));
+
 // Payload size limit (must be before body parsers)
 app.use(payloadSizeLimiter);
 
@@ -174,6 +181,9 @@ app.get('/metrics', requireApiKey, requireAdmin(), async (req, res) => {
 // Content-based request deduplication (for requests without idempotency keys)
 app.use(createDeduplicationMiddleware());
 
+// Response field filtering (?fields=id,amount,status)
+app.use(fieldFilterMiddleware());
+
 // Routes
 app.use('/wallets', walletRoutes);
 app.use('/donations', donationRoutes);
@@ -187,7 +197,11 @@ app.use('/fees', feesRoutes);
 app.use('/admin/feature-flags', featureFlagsAdminRoutes);
 app.use('/admin/db', dbAdminRoutes);
 app.use('/admin/retention', retentionAdminRoutes);
+app.use('/admin', backupAdminRoutes);
 app.use('/admin/matching-programs', matchingProgramsAdminRoutes);
+app.use('/admin/routing', routingAdminRoutes);
+app.use('/admin/impact-metrics', impactMetricsAdminRoutes);
+app.use('/admin/geo-blocking', require('./admin/geoBlocking'));
 
 // Fee bump admin route — lazy access to serviceContainer
 app.use('/admin/transactions', (req, res, next) => {
@@ -198,6 +212,8 @@ app.use('/admin/transactions', (req, res, next) => {
 app.use('/network', networkRoutes);
 app.use('/webhooks', webhooksRoutes);
 app.use('/campaigns', campaignsRoutes);
+app.use('/encryption', encryptionRoutes);
+app.use('/tiers', tiersRoutes);
 app.use('/offers', offersRoutes);
 app.use('/tags', tagsRoutes);
 app.use('/leaderboard', leaderboardRoutes);

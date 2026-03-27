@@ -71,7 +71,6 @@ async function initializeApiKeysTable() {
   }
 }
 
-async function createApiKey({ name, role = 'user', expiresInDays, createdBy, metadata = {}, gracePeriodDays = 30, signingRequired = false, allowedIps = null, monthlyQuota = null }) {
 /**
  * Create a new API key.
  *
@@ -133,6 +132,7 @@ async function createApiKey({
     keyPrefix,
     name,
     role,
+    scopes,
     status: API_KEY_STATUS.ACTIVE,
     createdAt: new Date(now).toISOString(),
     expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
@@ -181,6 +181,7 @@ async function validateApiKey(rawKey) {
     keyPrefix: row.key_prefix,
     name: row.name,
     role: row.role,
+    scopes: row.scopes ? JSON.parse(row.scopes) : [],
     status: row.status,
     isDeprecated: row.status === API_KEY_STATUS.DEPRECATED,
     last_used_at: now,
@@ -223,6 +224,7 @@ async function listApiKeys(filters = {}) {
     keyPrefix: row.key_prefix,
     name: row.name,
     role: row.role,
+    scopes: row.scopes ? JSON.parse(row.scopes) : [],
     status: row.status,
     isDeprecated: row.status === API_KEY_STATUS.DEPRECATED,
     last_used_at: row.last_used_at,
@@ -323,6 +325,7 @@ async function rotateApiKey(oldKeyId, { gracePeriodDays = 30 } = {}) {
     role: oldRow.role,
     createdBy: oldRow.created_by,
     metadata: oldRow.metadata ? JSON.parse(oldRow.metadata) : {},
+    scopes: oldRow.scopes ? JSON.parse(oldRow.scopes) : [],
     gracePeriodDays,
     notificationEmail: oldRow.notification_email || null,
   });
@@ -433,6 +436,9 @@ async function resetExpiredQuotas() {
   );
   
   return result.changes;
+}
+
+/**
  * Fetch active keys that expire within the given number of days and have not yet
  * received a notification at this threshold level.
  *
