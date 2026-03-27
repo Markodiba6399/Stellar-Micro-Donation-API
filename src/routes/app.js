@@ -498,6 +498,9 @@ async function startServer() {
       // Attach GraphQL WebSocket subscription server
       attachSubscriptionServer(server);
 
+      // Attach real-time balance streaming WebSocket
+      require('../services/websocketService').attach(server);
+
       recurringDonationScheduler.start();
       reconciliationService.start();
       auditLogRetentionService.start();
