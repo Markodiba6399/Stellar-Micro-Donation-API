@@ -9,6 +9,128 @@
  * Provides endpoints for querying transaction history and syncing with Stellar network.
  */
 
+/**
+ * @openapi
+ * tags:
+ *   - name: Transactions
+ *     description: Transaction history and synchronization
+ *
+ * /transactions:
+ *   get:
+ *     tags: [Transactions]
+ *     summary: Get paginated transactions
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 20
+ *       - in: query
+ *         name: cursor
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Paginated transaction list
+ *
+ * /transactions/sync:
+ *   post:
+ *     tags: [Transactions]
+ *     summary: Sync wallet transactions from Stellar network
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [publicKey]
+ *             properties:
+ *               publicKey:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Sync completed
+ *
+ * /transactions/multisig:
+ *   post:
+ *     tags: [Transactions]
+ *     summary: Create a pending multi-sig transaction
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [transaction_xdr, network_passphrase, required_signers, signer_keys]
+ *             properties:
+ *               transaction_xdr:
+ *                 type: string
+ *               network_passphrase:
+ *                 type: string
+ *               required_signers:
+ *                 type: integer
+ *                 minimum: 2
+ *               signer_keys:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *     responses:
+ *       201:
+ *         description: Multi-sig transaction created
+ *
+ * /transactions/multisig/collect:
+ *   post:
+ *     tags: [Transactions]
+ *     summary: Collect a signature for a pending multi-sig transaction
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [id, signer, signed_xdr]
+ *             properties:
+ *               id:
+ *                 type: integer
+ *               signer:
+ *                 type: string
+ *               signed_xdr:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Signature collected; submitted if threshold met
+ *       400:
+ *         description: Insufficient signatures
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 error:
+ *                   type: object
+ *                   properties:
+ *                     code:
+ *                       type: string
+ *                       example: INSUFFICIENT_SIGNATURES
+ *                     required:
+ *                       type: integer
+ *                     collected:
+ *                       type: integer
+ *                     remaining:
+ *                       type: integer
+ */
+
 const express = require('express');
 const router = express.Router();
 const Transaction = require('./models/transaction');
