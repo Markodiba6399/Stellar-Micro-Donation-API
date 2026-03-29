@@ -1798,6 +1798,59 @@ class MockStellarService extends StellarServiceInterface {
   }
 
   /**
+   * Validate whether a mock account is eligible for merging.
+   *
+   * Checks for open offers, non-native trustlines with non-zero balances,
+   * and data entries in the mock wallet store.
+   *
+   * @param {string} publicKey - Public key of the account to check
+   * @returns {Promise<{eligible: boolean, blockers: Array<{type: string, detail: string}>}>}
+   */
+  async validateMergeEligibility(publicKey) {
+    if (!this.isValidAddress(publicKey)) {
+      throw new ValidationError('Invalid Stellar address');
+    }
+
+    const wallet = this.wallets.get(publicKey);
+    if (!wallet) {
+      throw new NotFoundError('Account not found in mock wallets', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    const blockers = [];
+
+    // Check non-native balances
+    if (wallet.balances) {
+      for (const balance of wallet.balances) {
+        if (balance.asset_type !== 'native') {
+          const bal = parseFloat(balance.balance || '0');
+          if (bal > 0) {
+            blockers.push({
+              type: 'non_zero_trustline',
+              detail: `Non-zero trustline: ${balance.asset_code || balance.asset_type} (balance: ${balance.balance})`
+            });
+          }
+        }
+      }
+    }
+
+    // Check open offers
+    if (wallet.openOffers && wallet.openOffers.length > 0) {
+      blockers.push({ type: 'open_offers', detail: 'Account has open DEX offers' });
+    }
+
+    // Check data entries
+    const dataEntries = Object.keys(wallet.dataEntries || {});
+    if (dataEntries.length > 0) {
+      blockers.push({
+        type: 'data_entries',
+        detail: `Account has ${dataEntries.length} data entr${dataEntries.length === 1 ? 'y' : 'ies'}`
+      });
+    }
+
+    return { eligible: blockers.length === 0, blockers };
+  }
+
+  /**
    * Issue a custom Stellar asset to a recipient (mock implementation).
    *
    * Validates inputs, creates an in-memory asset balance for the recipient,
@@ -2754,6 +2807,37 @@ class MockStellarService extends StellarServiceInterface {
     if (!this._orderbookListeners) return 0;
     const key = `${sellingAsset}:${buyingAsset}`;
     return this._orderbookListeners.has(key) ? this._orderbookListeners.get(key).size : 0;
+  }
+
+  /**
+   * Mock openChannel
+   */
+  async openChannel(sourceSecret, recipientPublicKey, depositAmount) {
+    const escrowPublicKey = 'G' + crypto.randomBytes(32).toString('hex').toUpperCase().slice(0, 56);
+    const escrowSecret = 'S' + crypto.randomBytes(32).toString('hex').toUpperCase().slice(0, 56);
+    return {
+      escrowPublicKey,
+      escrowSecret,
+      transactionId: 'mock_tx_' + crypto.randomBytes(8).toString('hex'),
+      ledger: Math.floor(Math.random() * 1000000),
+    };
+  }
+
+  /**
+   * Mock updateChannel
+   */
+  async updateChannel(channelId, newAmount) {
+    return { channelId, balance: newAmount, updated: true };
+  }
+
+  /**
+   * Mock closeChannel
+   */
+  async closeChannel(channelId, escrowSecret, recipientPublicKey, amount) {
+    return {
+      transactionId: 'mock_settle_' + crypto.randomBytes(8).toString('hex'),
+      ledger: Math.floor(Math.random() * 1000000),
+    };
   }
 }
 
