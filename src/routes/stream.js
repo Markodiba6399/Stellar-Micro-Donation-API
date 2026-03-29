@@ -7,6 +7,86 @@
  * DEPENDENCIES: Database, middleware (auth, RBAC), SseManager, donationEvents
  */
 
+/**
+ * @openapi
+ * tags:
+ *   - name: Stream
+ *     description: Recurring donation schedules
+ *
+ * /stream/create:
+ *   post:
+ *     tags: [Stream]
+ *     summary: Create a recurring donation schedule
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [donorPublicKey, recipientPublicKey, amount, frequency]
+ *             properties:
+ *               donorPublicKey:
+ *                 type: string
+ *               recipientPublicKey:
+ *                 type: string
+ *               amount:
+ *                 type: number
+ *               frequency:
+ *                 type: string
+ *                 enum: [daily, weekly, monthly]
+ *     responses:
+ *       201:
+ *         description: Schedule created
+ *       400:
+ *         description: Validation error
+ *
+ * /stream/schedules:
+ *   get:
+ *     tags: [Stream]
+ *     summary: List all recurring donation schedules
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: List of schedules
+ *
+ * /stream/schedules/{id}:
+ *   get:
+ *     tags: [Stream]
+ *     summary: Get a specific schedule
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Schedule details
+ *       404:
+ *         description: Schedule not found
+ *   delete:
+ *     tags: [Stream]
+ *     summary: Cancel a recurring donation schedule
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Schedule cancelled
+ *       404:
+ *         description: Schedule not found
+ */
+
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');

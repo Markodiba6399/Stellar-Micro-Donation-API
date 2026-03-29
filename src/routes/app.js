@@ -304,6 +304,15 @@ app.get('/.well-known/stellar.toml', (req, res) => {
   res.type('text/plain').send(tomlContents.join('\n'));
 });
 
+// ─── OpenAPI / Swagger UI (issue #634) ───────────────────────────────────────
+try {
+  const { spec, swaggerUiMiddleware, swaggerUiSetup } = require('../config/openapi');
+  app.use('/api/docs', swaggerUiMiddleware, swaggerUiSetup);
+  app.get('/api/openapi.json', (req, res) => res.json(spec));
+} catch (_err) {
+  // swagger-jsdoc / swagger-ui-express not installed — skip silently
+}
+
 // Health check endpoint
 // Health check endpoints
 app.get('/health', async (req, res) => {

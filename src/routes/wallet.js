@@ -9,6 +9,103 @@
  * and transaction history queries. All business logic delegated to WalletService.
  */
 
+/**
+ * @openapi
+ * tags:
+ *   - name: Wallets
+ *     description: Wallet metadata management
+ *
+ * /wallets:
+ *   post:
+ *     tags: [Wallets]
+ *     summary: Create wallet metadata
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [publicKey]
+ *             properties:
+ *               publicKey:
+ *                 type: string
+ *                 description: Stellar public key
+ *               label:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Wallet created
+ *       400:
+ *         description: Validation error
+ *   get:
+ *     tags: [Wallets]
+ *     summary: List all wallets
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: List of wallets
+ *
+ * /wallets/{id}:
+ *   get:
+ *     tags: [Wallets]
+ *     summary: Get a specific wallet
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Wallet details
+ *       404:
+ *         description: Wallet not found
+ *   patch:
+ *     tags: [Wallets]
+ *     summary: Update wallet metadata
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               label:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Wallet updated
+ *
+ * /wallets/{publicKey}/transactions:
+ *   get:
+ *     tags: [Wallets]
+ *     summary: Get all transactions for a wallet
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: publicKey
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Transaction list
+ */
+
 const express = require('express');
 const router = express.Router();
 const { checkPermission, requireAdmin } = require('../middleware/rbac');

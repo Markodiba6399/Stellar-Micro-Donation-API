@@ -9,6 +9,165 @@
  * and status management. All business logic delegated to DonationService.
  */
 
+/**
+ * @openapi
+ * tags:
+ *   - name: Donations
+ *     description: Create and manage donations on the Stellar network
+ *
+ * /donations:
+ *   post:
+ *     tags: [Donations]
+ *     summary: Create a new donation
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [senderSecret, recipientPublicKey, amount]
+ *             properties:
+ *               senderSecret:
+ *                 type: string
+ *                 description: Stellar secret key of the sender
+ *               recipientPublicKey:
+ *                 type: string
+ *                 description: Stellar public key of the recipient
+ *               amount:
+ *                 type: number
+ *                 description: Amount in XLM
+ *               memo:
+ *                 type: string
+ *                 description: Optional transaction memo
+ *     responses:
+ *       201:
+ *         description: Donation created successfully
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Error'
+ *       401:
+ *         description: Unauthorized
+ *   get:
+ *     tags: [Donations]
+ *     summary: List all donations
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *         description: Maximum number of results
+ *       - in: query
+ *         name: cursor
+ *         schema:
+ *           type: string
+ *         description: Pagination cursor
+ *     responses:
+ *       200:
+ *         description: List of donations
+ *       401:
+ *         description: Unauthorized
+ *
+ * /donations/{id}:
+ *   get:
+ *     tags: [Donations]
+ *     summary: Get a specific donation
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Donation details
+ *       404:
+ *         description: Donation not found
+ *
+ * /donations/{id}/status:
+ *   patch:
+ *     tags: [Donations]
+ *     summary: Update donation status
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [status]
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [pending, completed, failed]
+ *     responses:
+ *       200:
+ *         description: Status updated
+ *       404:
+ *         description: Donation not found
+ *
+ * /donations/verify:
+ *   post:
+ *     tags: [Donations]
+ *     summary: Verify a transaction on the blockchain
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [transactionHash]
+ *             properties:
+ *               transactionHash:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Verification result
+ *
+ * /donations/limits:
+ *   get:
+ *     tags: [Donations]
+ *     summary: Get donation amount limits
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: Donation limits
+ *
+ * /donations/recent:
+ *   get:
+ *     tags: [Donations]
+ *     summary: Get recent donations
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *     responses:
+ *       200:
+ *         description: Recent donations
+ */
+
 const express = require('express');
 const router = express.Router();
 const requireApiKey = require('../middleware/apiKey');
