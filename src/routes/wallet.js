@@ -1,3 +1,51 @@
+// Inflation destination schema for PATCH
+const inflationDestinationSchema = {
+  type: 'object',
+  required: ['destination', 'sourceSecret'],
+  properties: {
+    destination: { type: 'string' },
+    sourceSecret: { type: 'string' }
+  }
+};
+
+// PATCH /wallets/:id/inflation-destination
+router.patch(
+  '/:id/inflation-destination',
+  requireAuth,
+  requirePermission('wallets:write'),
+  validateSchema(inflationDestinationSchema),
+  async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const { destination, sourceSecret } = req.body;
+      const wallet = await WalletService.getWalletById(id);
+      if (!wallet) return res.status(404).json({ error: 'Wallet not found' });
+      const result = await StellarService.setInflationDestination(sourceSecret, destination);
+      // Optionally log audit here
+      res.status(200).json({ success: true, inflationDestination: destination, result });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// GET /wallets/:id/inflation-destination
+router.get(
+  '/:id/inflation-destination',
+  requireAuth,
+  requirePermission('wallets:read'),
+  async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const wallet = await WalletService.getWalletById(id);
+      if (!wallet) return res.status(404).json({ error: 'Wallet not found' });
+      const inflationDestination = await StellarService.getInflationDestination(wallet.address);
+      res.status(200).json({ inflationDestination });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 /**
  * PUT /wallets/:id/inflation-destination
  * Set the inflation destination for a wallet's Stellar account.

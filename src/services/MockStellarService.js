@@ -28,6 +28,34 @@ const { getAssetKey, isSameAsset, serializeAsset } = require('../utils/stellarAs
 const NATIVE_ASSET = { type: 'native', code: 'XLM', issuer: null };
 
 class MockStellarService extends StellarServiceInterface {
+    /**
+     * Set the inflation destination for a mock wallet.
+     * @param {string} sourceSecret - Secret key of the source account
+     * @param {string} destinationPublicKey - Public key to set as inflation destination
+     * @returns {Promise<{hash: string, ledger: number}>}
+     */
+    async setInflationDestination(sourceSecret, destinationPublicKey) {
+      this._validateSecretKey(sourceSecret);
+      this._validatePublicKey(destinationPublicKey);
+      const wallet = this._findWalletBySecret(sourceSecret);
+      if (!wallet) throw new ValidationError('Invalid secret key');
+      wallet.inflationDestination = destinationPublicKey;
+      return {
+        hash: `mock_hash_${Math.random().toString(36).slice(2)}`,
+        ledger: Math.floor(Math.random() * 1000000) + 1
+      };
+    }
+
+    /**
+     * Get the inflation destination for a mock wallet.
+     * @param {string} publicKey - Public key of the account
+     * @returns {Promise<string|null>} The inflation destination or null
+     */
+    async getInflationDestination(publicKey) {
+      this._validatePublicKey(publicKey);
+      const wallet = this.wallets.get(publicKey);
+      if (!wallet) throw new ValidationError('Wallet not found');
+      return wallet.inflationDestination || null;
         /**
          * Given a secret key, return the corresponding public key from the mock wallet map.
          * @param {string} secretKey

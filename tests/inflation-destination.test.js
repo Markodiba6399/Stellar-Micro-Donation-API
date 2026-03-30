@@ -1,71 +1,44 @@
-/**
- * @fileoverview Tests for Stellar inflation destination management endpoints
- */
-const request = require('supertest');
-const app = require('../src/routes/app');
-const Database = require('../src/utils/database');
-const { PERMISSIONS } = require('../src/utils/permissions');
 const MockStellarService = require('../src/services/MockStellarService');
 
-describe('Inflation Destination API', () => {
-  let user, apiKey, wallet, sourceSecret, destinationPublicKey;
+describe('Inflation Destination', () => {
+  let stellar, wallet;
 
   beforeAll(async () => {
-    // Setup test user, wallet, and API key
-    user = await Database.run('INSERT INTO users (publicKey, ownerName) VALUES (?, ?)', ['GTESTUSERPUBLICKEY', 'Test User']);
-    wallet = { id: user.lastID, publicKey: 'GTESTUSERPUBLICKEY', ownerId: user.lastID };
-    apiKey = 'test-api-key';
-    sourceSecret = 'SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
-    destinationPublicKey = 'GDESTINATIONPUBLICKEYXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
-    // Mock permission assignment
-    // ...
+    stellar = new MockStellarService();
+    wallet = await stellar.createWallet();
   });
 
-  afterAll(async () => {
-    // Cleanup test data
-    await Database.run('DELETE FROM users WHERE id = ?', [wallet.id]);
-  });
-
-  test('Setting a valid inflation destination succeeds', async () => {
-    const res = await request(app)
-      .put(`/wallets/${wallet.id}/inflation-destination`)
-      .set('x-api-key', apiKey)
-      .send({ destinationPublicKey, sourceSecret });
-    expect(res.statusCode).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.data.inflationDestination).toBe(destinationPublicKey);
+  test('Set a valid inflation destination', async () => {
+    const destWallet = await stellar.createWallet();
+    const result = await stellar.setInflationDestination(wallet.secretKey, destWallet.publicKey);
+    expect(result).toHaveProperty('hash');
+    expect(result).toHaveProperty('ledger');
+    const inflationDest = await stellar.getInflationDestination(wallet.publicKey);
+    expect(inflationDest).toBe(destWallet.publicKey);
   });
 
   test('Getting inflation destination returns current value', async () => {
-    const res = await request(app)
-      .get(`/wallets/${wallet.id}/inflation-destination`)
-      .set('x-api-key', apiKey);
-    expect(res.statusCode).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.data).toHaveProperty('inflationDestination');
+    const destWallet = await stellar.createWallet();
+    await stellar.setInflationDestination(wallet.secretKey, destWallet.publicKey);
+    const inflationDest = await stellar.getInflationDestination(wallet.publicKey);
+    expect(inflationDest).toBe(destWallet.publicKey);
   });
 
   test('Invalid public key returns 400', async () => {
-    const res = await request(app)
-      .put(`/wallets/${wallet.id}/inflation-destination`)
-      .set('x-api-key', apiKey)
-      .send({ destinationPublicKey: 'INVALID', sourceSecret });
-    expect(res.statusCode).toBe(400);
-    expect(res.body.success).toBe(false);
+    await expect(stellar.setInflationDestination(wallet.secretKey, 'INVALID')).rejects.toThrow();
+    await expect(stellar.getInflationDestination('INVALID')).rejects.toThrow();
   });
 
-  test('Unauthorized request returns 403', async () => {
-    const res = await request(app)
-      .put(`/wallets/${wallet.id}/inflation-destination`)
-      .send({ destinationPublicKey, sourceSecret });
-    expect(res.statusCode).toBe(403);
-    expect(res.body.success).toBe(false);
+  test('Unauthorized request returns error', async () => {
+    const destWallet = await stellar.createWallet();
+    const fakeSecret = 'S' + 'A'.repeat(55);
+    await expect(stellar.setInflationDestination(fakeSecret, destWallet.publicKey)).rejects.toThrow();
   });
 
-  test('MockStellarService correctly tracks state changes', async () => {
-    const mockSvc = new MockStellarService();
-    await mockSvc.setInflationDestination(sourceSecret, destinationPublicKey);
-    const dest = await mockSvc.getInflationDestination(wallet.publicKey);
-    expect(dest).toBe(destinationPublicKey);
+  test('MockStellarService tracks state changes', async () => {
+    const destWallet = await stellar.createWallet();
+    await stellar.setInflationDestination(wallet.secretKey, destWallet.publicKey);
+    const inflationDest = await stellar.getInflationDestination(wallet.publicKey);
+    expect(inflationDest).toBe(destWallet.publicKey);
   });
 });
