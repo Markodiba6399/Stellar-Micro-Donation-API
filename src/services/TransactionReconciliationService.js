@@ -31,11 +31,19 @@ class TransactionReconciliationService {
     this.stellarService = stellarService;
     this.intervalId = null;
     this.isRunning = false;
-    this.checkInterval = 5 * 60 * 1000; // 5 minutes
+    this.checkInterval = 10 * 60 * 1000; // 10 minutes
     this.reconciliationInProgress = false;
 
     /** Running tally of orphaned transactions detected across all reconciliation cycles */
     this.orphanedTransactionCount = 0;
+  }
+
+  /**
+   * Set the FeeBumpService for automatic fee bumping during reconciliation.
+   * @param {Object} feeBumpService - FeeBumpService instance
+   */
+  setFeeBumpService(feeBumpService) {
+    this.feeBumpService = feeBumpService;
   }
 
   // ─── Lifecycle ────────────────────────────────────────────────────────────
@@ -77,7 +85,7 @@ class TransactionReconciliationService {
   async reconcile() {
     if (this.reconciliationInProgress) {
       log.debug('RECONCILIATION', 'Skipping — reconciliation already in progress');
-      return { corrected: 0, errors: 0, orphansDetected: 0, orphansCompensated: 0 };
+      return { corrected: 0, errors: 0, orphansDetected: 0, orphansCompensated: 0, feeBumpsApplied: 0, feeBumpErrors: 0 };
     }
 
     this.reconciliationInProgress = true;
@@ -107,19 +115,34 @@ class TransactionReconciliationService {
       // 2. Detect and compensate orphaned Stellar transactions
       const { detected, compensated } = await this.detectAndCompensateOrphans();
 
+      // 3. Process stuck transactions with fee bumps
+      let feeBumpsApplied = 0;
+      let feeBumpErrors = 0;
+      if (this.feeBumpService) {
+        try {
+          const feeBumpResult = await this.feeBumpService.processStuckTransactions();
+          feeBumpsApplied = feeBumpResult.succeeded;
+          feeBumpErrors = feeBumpResult.failed;
+        } catch (error) {
+          log.error('RECONCILIATION', 'Fee bump processing failed', { error: error.message });
+        }
+      }
+
       log.info('RECONCILIATION', 'Cycle complete', {
         corrected,
         errors,
         orphansDetected: detected,
         orphansCompensated: compensated,
+        feeBumpsApplied,
+        feeBumpErrors,
       });
 
-      return { corrected, errors, orphansDetected: detected, orphansCompensated: compensated };
+      return { corrected, errors, orphansDetected: detected, orphansCompensated: compensated, feeBumpsApplied, feeBumpErrors };
     } catch (error) {
       log.error('RECONCILIATION', 'Error during reconciliation cycle', {
         error: error.message,
       });
-      return { corrected: 0, errors: 1, orphansDetected: 0, orphansCompensated: 0 };
+      return { corrected: 0, errors: 1, orphansDetected: 0, orphansCompensated: 0, feeBumpsApplied: 0, feeBumpErrors: 0 };
     } finally {
       this.reconciliationInProgress = false;
     }
@@ -146,44 +169,51 @@ class TransactionReconciliationService {
       const result = await this.stellarService.verifyTransaction(tx.stellarTxId);
 
       if (result.verified && tx.status !== TRANSACTION_STATES.CONFIRMED) {
-        Transaction.updateStatus(tx.id, TRANSACTION_STATES.CONFIRMED, {
-          transactionId: tx.stellarTxId,
-          ledger: result.transaction.ledger,
-          confirmedAt: new Date().toISOString(),
-        });
-        
-        // Invalidate caching for wallets involved in this transaction
-        const Cache = require('../utils/cache');
-        const Database = require('../utils/database');
-        
+        // Try to auto-confirm; if the state machine rejects the transition, flag for manual review
         try {
-          if (tx.senderId) {
-            const sender = await Database.get('SELECT publicKey FROM users WHERE id = ?', [tx.senderId]);
-            if (sender) Cache.delete(`wallet_balance_${sender.publicKey}`);
+          Transaction.updateStatus(tx.id, TRANSACTION_STATES.CONFIRMED, {
+            transactionId: tx.stellarTxId,
+            ledger: result.transaction && result.transaction.ledger,
+            confirmedAt: new Date().toISOString(),
+          });
+
+          // Invalidate caching for wallets involved in this transaction
+          const Cache = require('../utils/cache');
+          const Database = require('../utils/database');
+          try {
+            if (tx.senderId) {
+              const sender = await Database.get('SELECT publicKey FROM users WHERE id = ?', [tx.senderId]);
+              if (sender) Cache.delete(`wallet_balance_${sender.publicKey}`);
+            }
+            if (tx.receiverId) {
+              const receiver = await Database.get('SELECT publicKey FROM users WHERE id = ?', [tx.receiverId]);
+              if (receiver) Cache.delete(`wallet_balance_${receiver.publicKey}`);
+            }
+          } catch (cacheErr) {
+            log.warn('RECONCILIATION', 'Failed to clear cache for confirmed transaction', { error: cacheErr.message });
           }
-          if (tx.receiverId) {
-            const receiver = await Database.get('SELECT publicKey FROM users WHERE id = ?', [tx.receiverId]);
-            if (receiver) Cache.delete(`wallet_balance_${receiver.publicKey}`);
-          }
-        } catch (cacheErr) {
-          log.warn('RECONCILIATION', 'Failed to clear cache for confirmed transaction', { error: cacheErr.message });
+
+          log.info('RECONCILIATION', 'Transaction corrected to confirmed', {
+            id: tx.id,
+            stellarTxId: tx.stellarTxId,
+            previousStatus: tx.status,
+          });
+
+          WebhookService.deliver('transaction.confirmed', {
+            id: tx.id,
+            stellarTxId: tx.stellarTxId,
+            previousStatus: tx.status,
+            status: TRANSACTION_STATES.CONFIRMED,
+            ledger: result.transaction && result.transaction.ledger,
+            confirmedAt: new Date().toISOString(),
+          }).catch(err => log.warn('RECONCILIATION', 'Webhook delivery error', { error: err.message }));
+        } catch (stateErr) {
+          // State machine rejected the transition — flag for manual resolution
+          this.flagDiscrepancy(
+            tx.id,
+            `Confirmed on-chain (${tx.stellarTxId}) but DB status is '${tx.status}': ${stateErr.message}`
+          );
         }
-
-        log.info('RECONCILIATION', 'Transaction corrected to confirmed', {
-          id: tx.id,
-          stellarTxId: tx.stellarTxId,
-          previousStatus: tx.status,
-        });
-
-        // Deliver webhook for state change
-        WebhookService.deliver('transaction.confirmed', {
-          id: tx.id,
-          stellarTxId: tx.stellarTxId,
-          previousStatus: tx.status,
-          status: TRANSACTION_STATES.CONFIRMED,
-          ledger: result.transaction && result.transaction.ledger,
-          confirmedAt: new Date().toISOString(),
-        }).catch(err => log.warn('RECONCILIATION', 'Webhook delivery error', { error: err.message }));
 
         return true;
       }
@@ -369,6 +399,57 @@ class TransactionReconciliationService {
       return all;
     }
     return [];
+  }
+
+  // ─── Discrepancy management ───────────────────────────────────────────────
+
+  /**
+   * Flag a transaction as needing reconciliation.
+   * Sets reconciliation_needed=true and records the reason.
+   *
+   * @param {string} txId - Local transaction ID
+   * @param {string} reason - Human-readable reason for flagging
+   * @returns {object} Updated transaction
+   */
+  flagDiscrepancy(txId, reason) {
+    const transactions = Transaction.loadTransactions();
+    const index = transactions.findIndex(t => t.id === txId);
+    if (index === -1) throw new Error(`Transaction not found: ${txId}`);
+    transactions[index].reconciliation_needed = true;
+    transactions[index].reconciliation_reason = reason;
+    transactions[index].reconciliation_flagged_at = new Date().toISOString();
+    Transaction.saveTransactions(transactions);
+    log.warn('RECONCILIATION', 'Transaction flagged', { txId, reason });
+    return transactions[index];
+  }
+
+  /**
+   * Resolve a flagged transaction by updating its status and clearing the flag.
+   *
+   * @param {string} txId - Local transaction ID
+   * @param {string} newStatus - Target status (e.g. 'confirmed', 'failed')
+   * @returns {object} Updated transaction
+   */
+  resolveDiscrepancy(txId, newStatus) {
+    const transactions = Transaction.loadTransactions();
+    const index = transactions.findIndex(t => t.id === txId);
+    if (index === -1) throw new Error(`Transaction not found: ${txId}`);
+    transactions[index].reconciliation_needed = false;
+    transactions[index].reconciliation_resolved_at = new Date().toISOString();
+    transactions[index].status = newStatus;
+    Transaction.saveTransactions(transactions);
+    log.info('RECONCILIATION', 'Discrepancy resolved', { txId, newStatus });
+    return transactions[index];
+  }
+
+  /**
+   * Return all transactions currently flagged as reconciliation_needed.
+   *
+   * @returns {{ count: number, transactions: object[] }}
+   */
+  getDiscrepancies() {
+    const flagged = Transaction.loadTransactions().filter(t => t.reconciliation_needed === true);
+    return { count: flagged.length, transactions: flagged };
   }
 
   // ─── Status ───────────────────────────────────────────────────────────────

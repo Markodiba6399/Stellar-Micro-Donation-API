@@ -20,6 +20,7 @@
 
 const { AppError, ERROR_CODES } = require("../utils/errors");
 const log = require('../utils/log');
+const { parseLanguage, getMessage } = require('../utils/i18n');
 
 /**
  * Production-safe message sanitizer
@@ -64,10 +65,9 @@ function sanitizeMessage(message, errorCode = 'INTERNAL_ERROR') {
  * Intent: Create consistent, secure error responses
  * @param {Object} error - Error object
  * @param {string} requestId - Request ID for tracing
- * @param {number} statusCode - HTTP status code
  * @returns {Object} - Formatted error response
  */
-function formatErrorResponse(error, requestId, statusCode = 500) {
+function formatErrorResponse(error, requestId) {
   const isProduction = process.env.NODE_ENV === 'production';
   const errorCode = error.errorCode || error.code || "INTERNAL_ERROR";
   const numericCode = error.numericCode || 9000;
@@ -105,6 +105,7 @@ function errorHandler(err, req, res, next) {
   void next;
 
   const isProduction = process.env.NODE_ENV === 'production';
+  const lang = parseLanguage(req.headers && req.headers['accept-language']);
 
   // Log 1: detailed context
   log.error("ERROR_HANDLER", "Error occurred", {
@@ -135,12 +136,20 @@ function errorHandler(err, req, res, next) {
     numericCode: err.numericCode,
   });
 
+  res.set('Content-Language', lang);
+
   // Handle known operational errors (AppError instances)
   if (err instanceof AppError) {
     const errorBody = err.toJSON();
     errorBody.error.requestId = req.id;
+    const translated = getMessage(err.errorCode, lang);
+    if (translated) errorBody.error.message = translated;
     if (!isProduction) {
       errorBody.error.debug = { name: err.name };
+    }
+    // Set X-Limit-Reset header for velocity limit errors
+    if (err.statusCode === 429 && err.resetAt) {
+      res.set('X-Limit-Reset', err.resetAt);
     }
     return res.status(err.statusCode).json(errorBody);
   }
@@ -152,7 +161,7 @@ function errorHandler(err, req, res, next) {
       error: {
         code: ERROR_CODES.VALIDATION_ERROR.code,
         numericCode: ERROR_CODES.VALIDATION_ERROR.numeric,
-        message: err.message,
+        message: getMessage('VALIDATION_ERROR', lang) || err.message,
         requestId: req.id,
         timestamp: new Date().toISOString(),
         ...(!isProduction && { debug: { name: err.name } }),
@@ -163,7 +172,7 @@ function errorHandler(err, req, res, next) {
   // Default: unexpected errors
   const statusCode = err.statusCode || err.status || 500;
   const message = isProduction
-    ? 'An unexpected error occurred. Please try again later.'
+    ? (getMessage('INTERNAL_ERROR', lang) || 'An unexpected error occurred. Please try again later.')
     : err.message;
 
   res.status(statusCode).json({
@@ -186,12 +195,14 @@ function errorHandler(err, req, res, next) {
  */
 function notFoundHandler(req, res) {
   const isProduction = process.env.NODE_ENV === 'production';
+  const lang = parseLanguage(req.headers && req.headers['accept-language']);
+  res.set('Content-Language', lang);
   res.status(404).json({
     success: false,
     error: {
       code: ERROR_CODES.ENDPOINT_NOT_FOUND.code,
       numericCode: ERROR_CODES.ENDPOINT_NOT_FOUND.numeric,
-      message: `Endpoint not found: ${req.method} ${req.path}`,
+      message: getMessage('ENDPOINT_NOT_FOUND', lang) || `Endpoint not found: ${req.method} ${req.path}`,
       requestId: req.id,
       timestamp: new Date().toISOString(),
       ...(!isProduction && { debug: { name: 'NotFoundError' } }),
@@ -201,5 +212,6 @@ function notFoundHandler(req, res) {
 
 module.exports = {
   errorHandler,
-  notFoundHandler
+  notFoundHandler,
+  formatErrorResponse
 };

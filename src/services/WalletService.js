@@ -90,6 +90,25 @@ class WalletService {
   }
 
   /**
+   * Create a wallet record for an existing on-chain account (bulk import).
+   * Unlike `createWallet`, this method does NOT trigger Friendbot funding,
+   * platform sponsorship, or any Stellar network calls — the account already
+   * exists on-chain and its balance has been fetched by the caller.
+   * @param {string} publicKey - Stellar public key (wallet address)
+   * @param {string|null} balance - XLM balance from Horizon, or null for unfunded accounts
+   * @returns {Object} Created wallet record
+   */
+  createWalletRecord(publicKey, balance) {
+    const sanitizedAddress = sanitizeStellarAddress(publicKey);
+
+    return Wallet.create({
+      address: sanitizedAddress,
+      balance: balance ?? null,
+      importedVia: 'bulk-import',
+    });
+  }
+
+  /**
    * Get all wallets
    * @returns {Array} Array of wallet objects
    */
@@ -177,10 +196,10 @@ class WalletService {
    * @returns {Promise<Object|null>} User object or null if not found
    */
   async getUserByPublicKey(publicKey) {
-    return await Database.get(
-      'SELECT id, publicKey, createdAt FROM users WHERE publicKey = ?',
-      [publicKey]
-    );
+   return await Database.get(
+    'SELECT id, publicKey, createdAt FROM users WHERE publicKey = ? AND deleted_at IS NULL',
+    [publicKey]
+  );
   }
 
   /**
@@ -203,22 +222,23 @@ class WalletService {
 
     // Get all transactions where user is sender or receiver
     const transactions = await Database.query(
-      `SELECT 
-        t.id,
-        t.senderId,
-        t.receiverId,
-        t.amount,
-        t.memo,
-        t.timestamp,
-        sender.publicKey as senderPublicKey,
-        receiver.publicKey as receiverPublicKey
-      FROM transactions t
-      LEFT JOIN users sender ON t.senderId = sender.id
-      LEFT JOIN users receiver ON t.receiverId = receiver.id
-      WHERE t.senderId = ? OR t.receiverId = ?
-      ORDER BY t.timestamp DESC`,
-      [user.id, user.id]
-    );
+  `SELECT 
+    t.id,
+    t.senderId,
+    t.receiverId,
+    t.amount,
+    t.memo,
+    t.timestamp,
+    sender.publicKey as senderPublicKey,
+    receiver.publicKey as receiverPublicKey
+  FROM transactions t
+  LEFT JOIN users sender ON t.senderId = sender.id
+  LEFT JOIN users receiver ON t.receiverId = receiver.id
+  WHERE (t.senderId = ? OR t.receiverId = ?) 
+    AND t.deleted_at IS NULL -- Added this line
+  ORDER BY t.timestamp DESC`,
+  [user.id, user.id]
+);
 
     // Format the response
     const formattedTransactions = transactions.map(tx => ({
@@ -288,6 +308,159 @@ class WalletService {
     Wallet.update(id, { sponsored: false, sponsorshipRevokedAt: new Date().toISOString() });
 
     return result;
+  }
+
+  /**
+   * Sponsor a new account's base reserve via the Stellar sponsorship protocol.
+   * Requires SPONSOR_SECRET to be configured.
+   *
+   * @param {string} id - Wallet ID of the account to sponsor
+   * @returns {Promise<{transactionId: string, ledger: number, sponsored: true}>}
+   * @throws {ValidationError} If SPONSOR_SECRET is not configured or service unavailable
+   * @throws {NotFoundError} If wallet not found
+   */
+  async sponsorAccount(id) {
+    const wallet = this.getWalletById(id);
+    if (!process.env.SPONSOR_SECRET) {
+      throw new ValidationError('SPONSOR_SECRET is not configured', null, ERROR_CODES.INVALID_REQUEST);
+    }
+    if (!this.stellarService) {
+      throw new ValidationError('Stellar service not available', null, ERROR_CODES.SERVICE_UNAVAILABLE);
+    }
+    const result = await this.stellarService.sponsorAccount(process.env.SPONSOR_SECRET, wallet.address);
+    Wallet.update(id, { sponsored: true, sponsoredAt: new Date().toISOString() });
+    return result;
+  }
+
+  /**
+   * Revoke sponsorship for a wallet using the new revokeSponsorship method.
+   * Validates that the sponsored account can cover its own reserve before revoking.
+   * Requires SPONSOR_SECRET to be configured.
+   *
+   * @param {string} id         - Wallet ID
+   * @param {string} [entryType='account'] - Entry type to revoke
+   * @returns {Promise<{transactionId: string, ledger: number, revoked: true}>}
+   * @throws {ValidationError} If SPONSOR_SECRET not configured, service unavailable,
+   *                           or account cannot cover its own reserve
+   * @throws {NotFoundError} If wallet not found
+   */
+  async revokeSponsorship(id, entryType = 'account') {
+    const wallet = this.getWalletById(id);
+    if (!process.env.SPONSOR_SECRET) {
+      throw new ValidationError('SPONSOR_SECRET is not configured', null, ERROR_CODES.INVALID_REQUEST);
+    }
+    if (!this.stellarService) {
+      throw new ValidationError('Stellar service not available', null, ERROR_CODES.SERVICE_UNAVAILABLE);
+    }
+
+    // Check the account can cover its own reserve (minimum 1 XLM base reserve)
+    let balance = 0;
+    try {
+      const balanceData = await this.stellarService.getBalance(wallet.address);
+      balance = parseFloat(balanceData.balance || balanceData.xlm || 0);
+    } catch (_) { /* account may not exist on-chain yet */ }
+
+    const MIN_RESERVE = parseFloat(process.env.MIN_RESERVE_XLM || '1');
+    if (balance < MIN_RESERVE) {
+      const err = new ValidationError(
+        `Account balance (${balance} XLM) is below the minimum reserve (${MIN_RESERVE} XLM) required to cover its own reserve`,
+        null,
+        ERROR_CODES.INVALID_REQUEST
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const result = await this.stellarService.revokeSponsorship(
+      process.env.SPONSOR_SECRET,
+      wallet.address,
+      entryType
+    );
+    Wallet.update(id, { sponsored: false, sponsorshipRevokedAt: new Date().toISOString() });
+    return result;
+  }
+
+  /**
+   * Get the current sponsorship status for a wallet.
+   *
+   * @param {string} id - Wallet ID
+   * @returns {Promise<{sponsored: boolean, sponsoredBy: string|null}>}
+   * @throws {NotFoundError} If wallet not found
+   */
+  async getSponsorshipStatus(id) {
+    const wallet = this.getWalletById(id);
+    if (!this.stellarService) {
+      return { sponsored: false, sponsoredBy: null };
+    }
+    return this.stellarService.getSponsorshipStatus(wallet.address);
+  }
+
+  /**
+   * Set or update an account data entry
+   * @param {string|number} walletId - Wallet ID
+   * @param {string} secretKey - Secret key of the wallet owner
+   * @param {string} key - Data entry key (max 64 bytes)
+   * @param {string} value - Data entry value (max 64 bytes)
+   * @returns {Promise<Object>} Transaction result with hash and ledger
+   */
+  async setAccountData(walletId, secretKey, key, value) {
+    if (!this.stellarService) {
+      throw new ValidationError('Stellar service not available', null, ERROR_CODES.SERVICE_UNAVAILABLE);
+    }
+
+    const wallet = this.getWalletById(walletId);
+    if (!wallet) {
+      throw new NotFoundError('Wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    // Call Stellar service to set the data entry
+    const result = await this.stellarService.setDataEntry(secretKey, key, value);
+    return result;
+  }
+
+  /**
+   * Delete an account data entry
+   * @param {string|number} walletId - Wallet ID
+   * @param {string} secretKey - Secret key of the wallet owner
+   * @param {string} key - Data entry key to delete
+   * @returns {Promise<Object>} Transaction result with hash and ledger
+   */
+  async deleteAccountData(walletId, secretKey, key) {
+    if (!this.stellarService) {
+      throw new ValidationError('Stellar service not available', null, ERROR_CODES.SERVICE_UNAVAILABLE);
+    }
+
+    const wallet = this.getWalletById(walletId);
+    if (!wallet) {
+      throw new NotFoundError('Wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    // Call Stellar service to delete the data entry
+    const result = await this.stellarService.deleteDataEntry(secretKey, key);
+    return result;
+  }
+
+  /**
+   * Get all account data entries for a wallet (from on-chain Horizon API)
+   * Note: This requires querying the Stellar network, which will be called
+   * by StellarService if we implement a getAccountData method.
+   * For now, returns data from the mock service for testing.
+   * @param {string|number} walletId - Wallet ID
+   * @returns {Promise<Object>} Account data entries
+   */
+  async getAccountData(walletId) {
+    if (!this.stellarService) {
+      throw new ValidationError('Stellar service not available', null, ERROR_CODES.SERVICE_UNAVAILABLE);
+    }
+
+    const wallet = this.getWalletById(walletId);
+    if (!wallet) {
+      throw new NotFoundError('Wallet not found', ERROR_CODES.WALLET_NOT_FOUND);
+    }
+
+    const publicKey = wallet.address || wallet.publicKey;
+    const entries = await this.stellarService.getDataEntries(publicKey);
+    return { entries };
   }
 }
 

@@ -11,8 +11,8 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const path = require('path');
-const { VALID_STELLAR_NETWORKS, HORIZON_URLS } = require('../constants');
-const { getStellarEnvironment } = require('./stellarEnvironments');
+const { VALID_STELLAR_NETWORKS } = require('../constants');
+const { getActiveEnvironment } = require('./stellarEnvironments');
 
 /**
  * Configuration error class for clear error messages
@@ -112,6 +112,28 @@ const validateUrl = (value, varName) => {
 };
 
 /**
+ * Validate IP address or CIDR range
+ */
+const isValidIPOrCIDR = (ip) => {
+  const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
+  const cidrRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]{1,2}$/;
+
+  if (ipRegex.test(ip)) {
+    const parts = ip.split('.').map(Number);
+    return parts.every(part => part >= 0 && part <= 255);
+  }
+
+  if (cidrRegex.test(ip)) {
+    const [ipPart, mask] = ip.split('/');
+    const maskNum = parseInt(mask);
+    const parts = ipPart.split('.').map(Number);
+    return parts.every(part => part >= 0 && part <= 255) && maskNum >= 0 && maskNum <= 32;
+  }
+
+  return false;
+};
+
+/**
  * Load and validate configuration
  */
 const loadConfig = () => {
@@ -185,6 +207,31 @@ const loadConfig = () => {
     }
   }
 
+  // Validate geo-blocking configuration
+  if (process.env.GEO_BLOCKED_COUNTRIES) {
+    const countries = process.env.GEO_BLOCKED_COUNTRIES.split(',').map(c => c.trim().toUpperCase());
+    const invalidCountries = countries.filter(c => !/^[A-Z]{2}$/.test(c));
+    if (invalidCountries.length > 0) {
+      errors.push(`GEO_BLOCKED_COUNTRIES contains invalid country codes: ${invalidCountries.join(', ')}`);
+    }
+  }
+
+  if (process.env.GEO_ALLOWED_COUNTRIES) {
+    const countries = process.env.GEO_ALLOWED_COUNTRIES.split(',').map(c => c.trim().toUpperCase());
+    const invalidCountries = countries.filter(c => !/^[A-Z]{2}$/.test(c));
+    if (invalidCountries.length > 0) {
+      errors.push(`GEO_ALLOWED_COUNTRIES contains invalid country codes: ${invalidCountries.join(', ')}`);
+    }
+  }
+
+  if (process.env.GEO_ALLOWED_IPS) {
+    const ips = process.env.GEO_ALLOWED_IPS.split(',').map(ip => ip.trim());
+    const invalidIPs = ips.filter(ip => !isValidIPOrCIDR(ip));
+    if (invalidIPs.length > 0) {
+      errors.push(`GEO_ALLOWED_IPS contains invalid IP addresses/CIDR ranges: ${invalidIPs.join(', ')}`);
+    }
+  }
+
   if (errors.length > 0) {
     const errorMessage = [
       'Configuration validation failed:',
@@ -218,18 +265,16 @@ const buildConfig = (env, isProduction, isTest) => {
   };
 
   // Stellar configuration
-  const envName = process.env.STELLAR_ENVIRONMENT || process.env.STELLAR_NETWORK || 'testnet';
-  
   if (!process.env.STELLAR_ENVIRONMENT && process.env.STELLAR_NETWORK) {
-    console.warn('\x1b[33m[DEPRECATION WARNING] STELLAR_NETWORK is deprecated and will be removed in a future release. Please update your .env file to use STELLAR_ENVIRONMENT instead.\x1b[0m');
+    console.warn('\x1b[33m[DEPRECATION WARNING] ... Please update your .env file to use STELLAR_ENVIRONMENT instead.\x1b[0m');
   }
   
-  const environmentConfig = getStellarEnvironment(envName);
+  const environmentConfig = getActiveEnvironment();
   
   const stellar = {
-    network: environmentConfig.name,
+    network: environmentConfig.environment,
     environment: environmentConfig,
-    horizonUrl: process.env.HORIZON_URL || environmentConfig.horizonUrl,
+    horizonUrl: environmentConfig.horizonUrl,
     mockEnabled: parseBoolean(process.env.MOCK_STELLAR, false),
     serviceSecretKey: process.env.STELLAR_SECRET || process.env.SERVICE_SECRET_KEY || null,
   };
@@ -280,6 +325,34 @@ const buildConfig = (env, isProduction, isTest) => {
     requireInProduction: isProduction,
   };
 
+  // Geo-blocking configuration
+  const geoBlocking = {
+    blockedCountries: process.env.GEO_BLOCKED_COUNTRIES
+      ? process.env.GEO_BLOCKED_COUNTRIES.split(',').map(country => country.trim().toUpperCase()).filter(Boolean)
+      : [],
+    allowedCountries: process.env.GEO_ALLOWED_COUNTRIES
+      ? process.env.GEO_ALLOWED_COUNTRIES.split(',').map(country => country.trim().toUpperCase()).filter(Boolean)
+      : [],
+    allowedIPs: process.env.GEO_ALLOWED_IPS
+      ? process.env.GEO_ALLOWED_IPS.split(',').map(ip => ip.trim()).filter(Boolean)
+      : [],
+    maxmindDbPath: process.env.MAXMIND_DB_PATH || path.join(__dirname, '../../data/GeoLite2-Country.mmdb'),
+  };
+
+  // Organization tax configuration for IRS compliance
+  const taxReceipt = {
+    ein: process.env.ORGANIZATION_EIN || null,
+    legalName: process.env.ORGANIZATION_LEGAL_NAME || null,
+    address: process.env.ORGANIZATION_ADDRESS || null,
+    city: process.env.ORGANIZATION_CITY || null,
+    state: process.env.ORGANIZATION_STATE || null,
+    zipCode: process.env.ORGANIZATION_ZIP_CODE || null,
+    phone: process.env.ORGANIZATION_PHONE || null,
+    email: process.env.ORGANIZATION_EMAIL || null,
+    website: process.env.ORGANIZATION_WEBSITE || null,
+    isConfigured: !!(process.env.ORGANIZATION_EIN && process.env.ORGANIZATION_LEGAL_NAME),
+  };
+
   // Application metadata
   const app = {
     name: 'stellar-micro-donation-api',
@@ -295,6 +368,18 @@ const buildConfig = (env, isProduction, isTest) => {
     donations,
     logging,
     encryption,
+    geoBlocking,
+    sep10: {
+      homeDomain: process.env.HOME_DOMAIN || null,
+      challengeTtlSeconds: parseInteger(
+        process.env.SEP10_CHALLENGE_TTL,
+        300,
+        60,
+        86400,
+        'SEP10_CHALLENGE_TTL'
+      ),
+    },
+    taxReceipt,
     app,
   };
   

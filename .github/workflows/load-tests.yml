@@ -1,0 +1,39 @@
+name: Load Tests
+
+on:
+  schedule:
+    # Run nightly at 02:00 UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run load tests
+        env:
+          MOCK_STELLAR: 'true'
+          NODE_ENV: test
+          API_KEYS: 'test-load-key,test-key-1,test-key-2'
+        run: npm run test:load -- --output ./reports/load --concurrency 10 --iterations 50
+
+      - name: Upload load test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-report
+          path: reports/load/
+          retention-days: 30

@@ -11,20 +11,48 @@
 
 const express = require('express');
 const helmet = require('helmet');
+const StellarSdk = require('stellar-sdk');
 const config = require('../config');
 const stellarConfig = require('../config/stellar');
 const donationRoutes = require('./donation');
 const walletRoutes = require('./wallet');
+const { thresholdsRouter } = require('./signers');
+const recoveryRoutes = require('./recovery');
 const statsRoutes = require('./stats');
 const streamRoutes = require('./stream');
+const NetworkStatusService = require('../services/NetworkStatusService');
+const { router: networkRoutes, setService: setNetworkService } = require('./network');
+const docsRoutes = require('./docs');
 const transactionRoutes = require('./transaction');
 const apiKeysRoutes = require('./apiKeys');
+const apiKeyUsageRoutes = require('./apiKeyUsage');
+const recurringDonationRoutes = require('./recurringDonation');
+const channelRoutes = require('./channels');
+const assetRoutes = require('./assets');
 const feesRoutes = require('./fees');
 const featureFlagsAdminRoutes = require('./admin/featureFlags');
+const createFeeBumpRouter = require('./admin/feeBump');
+const dbAdminRoutes = require('./admin/db');
+const adminTracesRoutes = require('./admin/traces');
 const retentionAdminRoutes = require('./admin/retention');
-const networkRoutes = require('./network');
+const backupAdminRoutes = require('./admin/backup');
+const encryptionAdminRoutes = require('./admin/encryption');
+const matchingProgramsAdminRoutes = require('./admin/matchingPrograms');
+const corporateMatchingAdminRoutes = require('./admin/corporateMatching');
+const { router: corporateMatchingRoutes } = require('./corporateMatching');
+const routingAdminRoutes = require('./admin/routing');
+const impactMetricsAdminRoutes = require('./admin/impactMetrics');
+const impactRoutes = require('./impact');
+const adminAnalyticsRoutes = require('./admin/analytics');
+const adminInspectRoutes = require('./admin/inspect');
+const reconciliationAdminRoutes = require('./admin/reconciliation');
 const webhooksRoutes = require('./webhooks');
+const campaignsRoutes = require('./campaigns');
+const tiersRoutes = require('./tiers');
 const offersRoutes = require('./offers');
+const tagsRoutes = require('./tags');
+const leaderboardRoutes = require('./leaderboard');
+const { router: federationLookupRoutes } = require('./federationLookup');
 const { errorHandler, notFoundHandler } = require('../middleware/errorHandler');
 const logger = require('../middleware/logger');
 const { attachUserRole } = require('../middleware/rbac');
@@ -37,10 +65,16 @@ const WebhookService = require('../services/WebhookService');
 const { validateRBAC } = require('../utils/rbacValidator');
 const log = require('../utils/log');
 const requestId = require('../middleware/requestId');
+const { attachLifecycleTracking } = require('../middleware/requestLifecycle');
 const serviceContainer = require('../config/serviceContainer');
-const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { payloadSizeLimiter } = require('../middleware/payloadSizeLimiter');
 const { createCorsMiddleware } = require('../middleware/cors');
+const { createCspMiddleware, cspReportRouter } = require('../middleware/csp');
 const { responseFormatterMiddleware } = require('../utils/responseFormatter');
+const trackQuotaUsage = require('../middleware/quotaTracker');
+const { startQuotaResetJob } = require('../jobs/quotaResetJob');
+const { createDeduplicationMiddleware } = require('../middleware/deduplication');
+const { fieldFilterMiddleware } = require('../middleware/fieldFilter');
 const {
   logStartupDiagnostics,
   logShutdownDiagnostics,
@@ -48,20 +82,67 @@ const {
 const { parseCursorPaginationQuery } = require('../utils/pagination');
 const AuditLogService = require('../services/AuditLogService');
 const auditLogRetentionService = require('../services/AuditLogRetentionService');
+const { runCleanup } = require('../jobs/cleanupJob');
+const { requireAdmin } = require('../middleware/rbac');
+const requireApiKey = require('../middleware/apiKey');
+const encryptionRoutes = require('./encryption');
+const authRoutes = require('./auth');
+const toolsRoutes = require('./tools');
+const { metricsMiddleware, registry } = require('../utils/metrics');
+const { attachSubscriptionServer } = require('../graphql');
+const sseManager = require('../services/SseManager');
+const claimableBalancesRoutes = require('./claimableBalances');
 
 const app = express();
+
+// Configure trusted proxies for API Gateway integration
+const trustedProxies = process.env.TRUSTED_PROXIES
+  ? process.env.TRUSTED_PROXIES.split(',').map(ip => ip.trim())
+  : 'loopback';
+app.set('trust proxy', trustedProxies);
 
 // Initialize services from container
 const stellarService = serviceContainer.getStellarService();
 const reconciliationService = serviceContainer.getTransactionReconciliationService();
 const recurringDonationScheduler = serviceContainer.getRecurringDonationScheduler();
 const networkStatusService = serviceContainer.getNetworkStatusService();
+const transactionSyncScheduler = serviceContainer.getTransactionSyncScheduler();
 
 // Initialize replay detection cleanup timer (will be started in startServer)
 let replayCleanupTimer = null;
 
+// Graceful shutdown state
+let isShuttingDown = false;
+let inFlightRequests = 0;
+
+// In-flight request tracking and graceful shutdown rejection middleware
+app.use((req, res, next) => {
+  if (isShuttingDown) {
+    if (req.path.startsWith('/health')) return next();
+    res.set('Connection', 'close');
+    return res.status(503).json({
+      success: false,
+      error: { code: 'SERVICE_UNAVAILABLE', message: 'Server is shutting down' }
+    });
+  }
+  
+  inFlightRequests++;
+  let handled = false;
+  const decrement = () => {
+    if (!handled) {
+      handled = true;
+      inFlightRequests--;
+    }
+  };
+  
+  res.on('finish', decrement);
+  res.on('close', decrement);
+  next();
+});
+
 // Middleware
 app.use(requestId);
+app.use(attachLifecycleTracking);
 
 // Attach res.success / res.failure envelope helpers (must be after requestId)
 app.use(responseFormatterMiddleware());
@@ -88,6 +169,13 @@ app.use(helmet({
 // CORS (must be before body parsers and route handlers)
 app.use(createCorsMiddleware());
 
+// CSP: per-request nonce + strict directives (after helmet, before routes)
+app.use(createCspMiddleware());
+app.use(cspReportRouter);
+
+// Geographic IP blocking (must be before body parsers)
+app.use(require('../middleware/geoBlock'));
+
 // Payload size limit (must be before body parsers)
 app.use(payloadSizeLimiter);
 
@@ -95,6 +183,9 @@ app.use(express.json({
   verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); }
 }));
 app.use(express.urlencoded({ extended: true }));
+
+// Block check for auto-blocked IPs (early security)
+app.use(require('../middleware/blockCheck'));
 
 // Request/Response logging middleware
 app.use(logger.middleware());
@@ -111,19 +202,50 @@ app.use(require('../middleware/suspiciousPatternDetection'));
 // Attach user role from authentication (must be before routes)
 app.use(attachUserRole());
 
+// Track API quota usage (must be after authentication)
+app.use(trackQuotaUsage);
+
+// Prometheus request duration instrumentation
+app.use(metricsMiddleware);
+
+// GET /metrics — Prometheus scrape endpoint (admin only)
+app.get('/metrics', requireApiKey, requireAdmin(), async (req, res) => {
+  res.set('Content-Type', registry.contentType);
+  res.end(await registry.metrics());
+});
+// Content-based request deduplication (for requests without idempotency keys)
+app.use(createDeduplicationMiddleware());
+
+// Response field filtering (?fields=id,amount,status)
+app.use(fieldFilterMiddleware());
+
 // Routes
 app.use('/wallets', walletRoutes);
+app.use('/wallets', thresholdsRouter);
+app.use('/', recoveryRoutes);
 app.use('/donations', donationRoutes);
+app.use('/donations', require('./receipt'));
+app.use('/donations/recurring', recurringDonationRoutes);
+app.use('/assets', assetRoutes);
 app.use('/stats', statsRoutes);
 app.use('/stream', streamRoutes);
-app.use('/transactions', transactionRoutes);
-app.use('/api-keys', apiKeysRoutes);
-app.use('/fees', feesRoutes);
-app.use('/admin/feature-flags', featureFlagsAdminRoutes);
-app.use('/admin/retention', retentionAdminRoutes);
 app.use('/network', networkRoutes);
 app.use('/webhooks', webhooksRoutes);
+app.use('/campaigns', campaignsRoutes);
+app.use('/encryption', encryptionRoutes);
+app.use('/tiers', tiersRoutes);
 app.use('/offers', offersRoutes);
+app.use('/orderbook/:baseAsset/:counterAsset', require('./orderbook'));
+app.use('/tags', tagsRoutes);
+app.use('/leaderboard', leaderboardRoutes);
+app.use('/federation', federationLookupRoutes);
+app.use('/tools', toolsRoutes);
+app.use('/auth', authRoutes);
+app.use('/docs', docsRoutes);
+app.use('/transactions', transactionRoutes);
+app.use('/', corporateMatchingRoutes);
+app.use('/claimable-balances', claimableBalancesRoutes);
+app.use('/liquidity-pools', require('./liquidity-pools'));
 
 // Exchange rates endpoint
 app.get('/exchange-rates', async (req, res) => {
@@ -148,10 +270,45 @@ app.get('/exchange-rates', async (req, res) => {
   }
 });
 
+// SEP-0010 Stellar TOML discovery endpoint
+app.get('/.well-known/stellar.toml', (req, res) => {
+  const host = req.get('host') || 'localhost';
+  const scheme = req.protocol || 'https';
+  const authServer = `${scheme}://${host}/auth`;
+  const signingKey = process.env.SERVICE_SIGNING_KEY || process.env.SERVICE_SECRET_KEY || process.env.STELLAR_SECRET || '';
+
+  // Minimal SEP-0010 fields
+  const tomlContents = [];
+  tomlContents.push('VERSION = "1.0.0"');
+  tomlContents.push(`AUTH_SERVER = "${authServer}"`);
+  if (signingKey) {
+    tomlContents.push(`SIGNING_KEY = "${StellarSdk.Keypair.fromSecret(signingKey).publicKey()}"`);
+  }
+
+  res.type('text/plain').send(tomlContents.join('\n'));
+});
+
+// ─── OpenAPI / Swagger UI (issue #634) ───────────────────────────────────────
+try {
+  const { spec, swaggerUiMiddleware, swaggerUiSetup } = require('../config/openapi');
+  app.use('/api/docs', swaggerUiMiddleware, swaggerUiSetup);
+  app.get('/api/openapi.json', (req, res) => res.json(spec));
+} catch (_err) {
+  // swagger-jsdoc / swagger-ui-express not installed — skip silently
+}
+
 // Health check endpoint
 // Health check endpoints
 app.get('/health', async (req, res) => {
   const health = await HealthCheckService.getFullHealth(stellarService, networkStatusService);
+  const stellarConfig = require('../config/stellar');
+  health.stellarEnvironment = stellarConfig.environment || 'testnet';
+  health.stellarNetwork = stellarConfig.network || 'testnet';
+  health.clientIp = req.ip;
+  health.protocol = req.protocol;
+  health.requestId = req.id;
+  health.transactionSync = transactionSyncScheduler.getSyncStatus();
+  
   const httpStatus = health.status === 'unhealthy' ? 503 : 200;
   return res.status(httpStatus).json(health);
 });
@@ -179,6 +336,36 @@ app.get('/abuse-signals', require('../middleware/rbac').requireAdmin(), (req, re
   });
 });
 
+// Blocked IPs admin endpoints
+app.get('/admin/blocked-ips', require('../middleware/rbac').requireAdmin(), (req, res) => {
+  const abuseDetectionService = require('../services/AbuseDetectionService');
+  res.json({
+    success: true,
+    data: abuseDetectionService.getBlocked(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.delete('/admin/blocked-ips/:ip', require('../middleware/rbac').requireAdmin(), (req, res) => {
+  const abuseDetectionService = require('../services/AbuseDetectionService');
+  const ip = req.params.ip;
+  const unblocked = abuseDetectionService.unblock(ip);
+  if (unblocked) {
+    res.json({
+      success: true,
+      message: 'IP unblocked',
+      ip,
+      timestamp: new Date().toISOString()
+    });
+  } else {
+    res.status(404).json({
+      success: false,
+      error: { code: 'IP_NOT_BLOCKED', message: 'IP not currently blocked' },
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Suspicious pattern metrics endpoint (admin only)
 app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (req, res) => {
   const suspiciousPatternDetector = require('../utils/suspiciousPatternDetector');
@@ -190,61 +377,11 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
   });
 });
 
-// Idempotency stats endpoint (admin only)
-app.get('/admin/idempotency/stats', require('../middleware/rbac').requireAdmin(), async (req, res) => {
-  try {
-    const IdempotencyService = require('../services/IdempotencyService');
-    const stats = await IdempotencyService.getStats();
-    const oldest = await require('../utils/database').get(
-      `SELECT MIN(createdAt) as oldest FROM idempotency_keys WHERE datetime(expiresAt) > datetime('now')`
-    );
-    return res.json({
-      success: true,
-      data: {
-        ...stats,
-        oldestActiveKeyAge: oldest && oldest.oldest
-          ? Math.floor((Date.now() - new Date(oldest.oldest).getTime()) / 1000)
-          : null,
-      },
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: { message: err.message } });
-  }
-});
+// Transaction inspection (admin only)
+app.use('/admin/inspect/xdr', require('../middleware/rbac').requireAdmin(), adminInspectRoutes);
 
-// Replay detection stats endpoint (admin only)
-app.get('/admin/replay-stats', require('../middleware/rbac').requireAdmin(), (req, res) => {
-  try {
-    const replayDetectionMiddleware = require('../middleware/replayDetection');
-    const replayConfig = require('../config/replayDetection');
-    
-    // Get stats from tracking store with config for complete information
-    const stats = replayDetectionMiddleware.trackingStore.getStats({
-      windowSeconds: replayConfig.windowSeconds,
-      threshold: replayConfig.threshold
-    });
-    
-    res.json({
-      success: true,
-      data: stats,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    log.error('ADMIN', 'Failed to retrieve replay stats', {
-      error: error.message,
-      stack: error.stack
-    });
-    
-    res.status(500).json({
-      success: false,
-      error: {
-        code: 'REPLAY_STATS_ERROR',
-        message: 'Failed to retrieve replay statistics'
-      },
-      timestamp: new Date().toISOString()
-    });
-  }
-});
+// Audit log export (Issue #604) - async jobs with signed download URLs
+app.use('/admin/audit-logs/export', require('./admin/auditLogExport'));
 
 // Audit logs endpoint (admin only)
 app.get('/admin/audit-logs', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
@@ -317,6 +454,20 @@ app.post('/admin/reconcile', require('../middleware/rbac').requireAdmin(), async
   }
 });
 
+// Admin sync endpoint — triggers immediate transaction sync for all wallets
+app.post('/admin/sync', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
+  try {
+    const result = await transactionSyncScheduler.syncAllWallets();
+    res.json({
+      success: true,
+      message: 'Transaction sync complete',
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Orphaned transactions stats (admin only)
 app.get('/admin/orphaned-transactions', require('../middleware/rbac').requireAdmin(), async (req, res, next) => {
   try {
@@ -353,12 +504,13 @@ process.on('unhandledRejection', (reason, promise) => {
   });
 });
 
-const PORT = config.server.port;
+let cleanupInterval = null;
 
 async function startServer() {
   try {
     await logStartupDiagnostics();
-    await Database.initialize();
+    const { runMigrations } = require('../utils/migrationRunner');
+    await runMigrations();
     await initializeApiKeysTable();
     
     // Initialize feature flags table
@@ -372,11 +524,35 @@ async function startServer() {
     await validateRBAC();
 
     const server = app.listen(PORT, async () => {
-      recurringDonationScheduler.start();
-      reconciliationService.start();
-      auditLogRetentionService.start();
+      // Attach GraphQL WebSocket subscription server
+      attachSubscriptionServer(server);
+
+      // Attach real-time balance streaming WebSocket
+      require('../services/websocketService').attach(server);
+
+      // Only start background workers and jobs if not in test environment
+      if (process.env.NODE_ENV !== 'test') {
+        const stopQuotaResetJob = startQuotaResetJob();
+        server.stopQuotaResetJob = stopQuotaResetJob;
+
+        // Start pledge expiry worker
+        require('../workers/expiryWorker').start();
+
+        recurringDonationScheduler.start();
+        reconciliationService.start();
+        auditLogRetentionService.start();
+        transactionSyncScheduler.start();
+        sseManager.start();
+        
+        runCleanup(); // Run once on startup
+        cleanupInterval = setInterval(runCleanup, 24 * 60 * 60 * 1000);
+      }
       
       // Initialize and start network status monitoring
+      networkStatusService.on('network.degraded', (status) => {
+        log.warn('NETWORK_STATUS', 'Network status degraded', { status });
+      });
+
       try {
         await networkStatusService.initialize();
       } catch (err) {
@@ -388,6 +564,16 @@ async function startServer() {
       const { startCleanup } = require('../utils/replayDetector');
       const replayConfig = require('../config/replayDetection');
       replayCleanupTimer = startCleanup(replayDetectionMiddleware.trackingStore, replayConfig);
+
+      // Initialize Leaderboard SSE for real-time updates
+      try {
+        const LeaderboardSSE = require('../services/LeaderboardSSE');
+        LeaderboardSSE.initLeaderboardSSE();
+      } catch (err) {
+        log.error('APP', 'Failed to initialize LeaderboardSSE', {
+          error: err.message,
+        });
+      }
 
       log.info('APP', 'API started', {
         port: PORT,
@@ -407,21 +593,80 @@ async function startServer() {
     });
 
     const gracefulShutdown = async (signal) => {
+      if (isShuttingDown) return;
+      isShuttingDown = true;
+      log.info("SHUTDOWN", `Received ${signal}, starting graceful shutdown`);
       logShutdownDiagnostics(signal);
 
+      clearInterval(cleanupInterval); // Stop the timer so the process can exit
+
+      const timeoutMs = parseInt(process.env.SHUTDOWN_TIMEOUT_MS || process.env.SHUTDOWN_TIMEOUT || '30000', 10);
+      let forcedExit = false;
+      const forceExit = setTimeout(() => {
+        forcedExit = true;
+        log.error("SHUTDOWN", `Forced shutdown after ${timeoutMs}ms timeout`, {
+          abandonedRequests: inFlightRequests
+        });
+        process.exit(1);
+      }, timeoutMs);
+
       server.close(async () => {
-        log.info("SHUTDOWN", "HTTP server closed");
-        recurringDonationScheduler.stop();
+        log.info("SHUTDOWN", "HTTP server closed to new connections");
+
+        // Wait for in-flight requests to drain
+        await new Promise((resolve) => {
+          const waitInterval = setInterval(() => {
+            if (forcedExit) { clearInterval(waitInterval); return resolve(); }
+            if (inFlightRequests > 0) {
+              log.info("SHUTDOWN", `Waiting for ${inFlightRequests} in-flight requests to complete...`);
+              return;
+            }
+            clearInterval(waitInterval);
+            log.info("SHUTDOWN", "All in-flight requests completed.");
+            resolve();
+          }, 500);
+        });
+
+        if (forcedExit) return;
+
+        // Flush pending webhook deliveries
+        try {
+          const WebhookService = require('../services/WebhookService');
+          if (typeof WebhookService.flushPending === 'function') {
+            await WebhookService.flushPending();
+          }
+          log.info("SHUTDOWN", "Webhooks flushed");
+        } catch (err) {
+          log.error("SHUTDOWN", "Error flushing webhooks", { error: err.message });
+        }
+
+        // Stop recurring donation scheduler and wait for running job
+        try {
+          await recurringDonationScheduler.stopGracefully
+            ? recurringDonationScheduler.stopGracefully()
+            : recurringDonationScheduler.stop();
+          log.info("SHUTDOWN", "Scheduler stopped");
+        } catch (err) {
+          log.error("SHUTDOWN", "Error stopping scheduler", { error: err.message });
+        }
+
+        clearTimeout(forceExit);
+
         reconciliationService.stop();
         auditLogRetentionService.stop();
+        transactionSyncScheduler.stop();
+        require('../workers/expiryWorker').stop();
         
-        // Shutdown network status service
+        // Stop quota reset job
+        if (server.stopQuotaResetJob) {
+          server.stopQuotaResetJob();
+          log.info("SHUTDOWN", "Quota reset job stopped");
+        }
+        
         try {
           await networkStatusService.shutdown();
         } catch (err) {
-          log.error("SHUTDOWN", "Error shutting down NetworkStatusService", {
-            error: err.message,
-          });
+          log.error("SHUTDOWN", "Error shutting down NetworkStatusService", { error: err.message });
         }
 
         if (replayCleanupTimer) {
@@ -432,13 +677,9 @@ async function startServer() {
         await Database.close();
         log.info("SHUTDOWN", "Database pool closed");
 
+        log.info("SHUTDOWN", "Graceful shutdown complete.");
         process.exit(0);
       });
-
-      setTimeout(() => {
-        log.error("SHUTDOWN", "Forced shutdown after timeout");
-        process.exit(1);
-      }, 10000);
     };
 
     process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

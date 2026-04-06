@@ -1,38 +1,54 @@
 [
   {
-    "id": "tx-0.8813048511125139",
-    "donor": "ALICE",
-    "recipient": "BOB",
-    "amount": 10,
-    "status": "confirmed",
-    "timestamp": "2026-03-23T07:36:48.149Z",
+    "amount": "50",
+    "donor": "d1",
+    "recipient": "r",
+    "tags": [
+      "education"
+    ],
+    "timestamp": "2026-03-30T14:42:21.158Z",
+    "id": "f53592e0-cb15-4e36-87e4-236274d416fe",
     "memo": "",
+    "memoType": "text",
+    "memoHash": null,
+    "encryptionMetadata": null,
+    "memoEnvelope": null,
+    "notes": null,
+    "apiKeyId": null,
+    "status": "pending",
     "stellarTxId": null,
     "stellarLedger": null,
-    "statusUpdatedAt": "2026-03-24T07:36:48.149Z"
+    "statusUpdatedAt": "2026-03-30T14:42:21.158Z",
+    "envelopeXdr": null,
+    "feeBumpCount": 0,
+    "originalFee": null,
+    "currentFee": null,
+    "lastFeeBumpAt": null
   },
   {
-    "id": "tx-0.40480895831664776",
-    "donor": "ALICE",
-    "recipient": "CAROL",
-    "amount": 20,
-    "status": "confirmed",
-    "timestamp": "2026-03-19T07:36:48.149Z",
+    "amount": "100",
+    "donor": "d2",
+    "recipient": "r",
+    "tags": [
+      "education"
+    ],
+    "timestamp": "2026-03-30T14:42:21.158Z",
+    "id": "b1a2ca08-4034-4404-9dc3-a69cd4162213",
     "memo": "",
+    "memoType": "text",
+    "memoHash": null,
+    "encryptionMetadata": null,
+    "memoEnvelope": null,
+    "notes": null,
+    "apiKeyId": null,
+    "status": "pending",
     "stellarTxId": null,
     "stellarLedger": null,
-    "statusUpdatedAt": "2026-03-24T07:36:48.149Z"
-  },
-  {
-    "id": "tx-0.8548759654620084",
-    "donor": "BOB",
-    "recipient": "CAROL",
-    "amount": 30,
-    "status": "confirmed",
-    "timestamp": "2026-03-14T07:36:48.149Z",
-    "memo": "",
-    "stellarTxId": null,
-    "stellarLedger": null,
-    "statusUpdatedAt": "2026-03-24T07:36:48.149Z"
+    "statusUpdatedAt": "2026-03-30T14:42:21.158Z",
+    "envelopeXdr": null,
+    "feeBumpCount": 0,
+    "originalFee": null,
+    "currentFee": null,
+    "lastFeeBumpAt": null
   }
 ]

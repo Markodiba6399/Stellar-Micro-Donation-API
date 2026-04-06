@@ -9,14 +9,72 @@
  * daily/weekly stats, donor/recipient reports, and summary analytics.
  */
 
+/**
+ * @openapi
+ * tags:
+ *   - name: Statistics
+ *     description: Donation analytics and statistics
+ *
+ * /stats/daily:
+ *   get:
+ *     tags: [Statistics]
+ *     summary: Get daily donation statistics
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: Daily stats
+ *
+ * /stats/weekly:
+ *   get:
+ *     tags: [Statistics]
+ *     summary: Get weekly donation statistics
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: Weekly stats
+ *
+ * /stats/summary:
+ *   get:
+ *     tags: [Statistics]
+ *     summary: Get summary analytics
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: Summary analytics
+ *
+ * /stats/donors:
+ *   get:
+ *     tags: [Statistics]
+ *     summary: Get donor statistics
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: Donor stats
+ *
+ * /stats/recipients:
+ *   get:
+ *     tags: [Statistics]
+ *     summary: Get recipient statistics
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: Recipient stats
+ */
+
 const express = require('express');
 const router = express.Router();
 const StatsService = require('../services/StatsService');
 const { validateDateRange } = require('../middleware/validation');
-const { checkPermission } = require('../middleware/rbac');
+const { checkPermission, requireTier } = require('../middleware/rbac');
 const { PERMISSIONS } = require('../utils/permissions');
 const { validateSchema } = require('../middleware/schemaValidation');
 const AuditLogService = require('../services/AuditLogService');
+const { cacheMiddleware } = require('../middleware/caching');
 
 /** Fire-and-forget audit log for stats data access */
 function auditStatsAccess(req, res, next) {
@@ -70,11 +128,39 @@ const walletAnalyticsSchema = validateSchema({
 });
 
 /**
+ * GET /stats/tags
+ * Get tag aggregated donation volume
+ * Query params: startDate, endDate (ISO format)
+ */
+router.get('/tags', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, strictDateRangeQuerySchema, validateDateRange, (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    const stats = StatsService.getTagStats(start, end);
+
+    res.json({
+      success: true,
+      data: stats,
+      metadata: {
+        startDate,
+        endDate,
+        totalTagsCount: stats.length,
+        generatedAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * GET /stats/daily
  * Get daily aggregated donation volume
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, strictDateRangeQuerySchema, validateDateRange, (req, res) => {
+router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, cacheMiddleware('stats', 'private'), strictDateRangeQuerySchema, validateDateRange, (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
@@ -120,6 +206,7 @@ router.get(
   "/weekly",
   checkPermission(PERMISSIONS.STATS_READ),
   auditStatsAccess,
+  cacheMiddleware('stats', 'private'),
   strictDateRangeQuerySchema,
   validateDateRange,
   (req, res, next) => {
@@ -157,6 +244,7 @@ router.get(
   "/summary",
   checkPermission(PERMISSIONS.STATS_READ),
   auditStatsAccess,
+  cacheMiddleware('stats', 'private'),
   strictDateRangeQuerySchema,
   validateDateRange,
   (req, res, next) => {
@@ -254,7 +342,7 @@ router.get(
  * Get analytics fee summary for reporting
  * Query params: startDate, endDate (ISO format)
  */
-router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, strictDateRangeQuerySchema, validateDateRange, (req, res) => {
+router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, strictDateRangeQuerySchema, validateDateRange, (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
@@ -279,7 +367,7 @@ router.get('/analytics-fees', checkPermission(PERMISSIONS.STATS_READ), auditStat
  * Get donation analytics for a specific wallet
  * Query params: startDate, endDate (optional, ISO format)
  */
-router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, (req, res) => {
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), requireTier('pro'), walletAnalyticsSchema, (req, res, next) => {
   try {
     const { walletAddress } = req.params;
     const { startDate, endDate } = req.query;
@@ -328,7 +416,7 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
   }
 });
 
-router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, async (req, res) => {
+router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS_READ), walletAnalyticsSchema, async (req, res, next) => {
   try {
     const { walletAddress } = req.params;
 
@@ -473,6 +561,32 @@ router.get('/dashboard', checkPermission(PERMISSIONS.STATS_READ), (req, res, nex
     if (error.statusCode === 400) {
       return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: error.message } });
     }
+    next(error);
+  }
+});
+
+/**
+ * GET /stats/anonymous-breakdown
+ * Get breakdown of anonymous vs identified donations
+ *
+ * Query params:
+ *   startDate {string} - ISO date string (default: 30 days ago)
+ *   endDate   {string} - ISO date string (default: now)
+ */
+router.get('/anonymous-breakdown', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    const start = startDate ? new Date(startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const end = endDate ? new Date(endDate) : new Date();
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: 'Invalid date format' } });
+    }
+
+    const data = StatsService.getAnonymousBreakdown(start, end);
+
+    res.json({ success: true, data });
+  } catch (error) {
     next(error);
   }
 });

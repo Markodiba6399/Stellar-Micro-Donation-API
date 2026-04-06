@@ -7,6 +7,86 @@
  * DEPENDENCIES: Database, middleware (auth, RBAC), SseManager, donationEvents
  */
 
+/**
+ * @openapi
+ * tags:
+ *   - name: Stream
+ *     description: Recurring donation schedules
+ *
+ * /stream/create:
+ *   post:
+ *     tags: [Stream]
+ *     summary: Create a recurring donation schedule
+ *     security:
+ *       - ApiKeyAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [donorPublicKey, recipientPublicKey, amount, frequency]
+ *             properties:
+ *               donorPublicKey:
+ *                 type: string
+ *               recipientPublicKey:
+ *                 type: string
+ *               amount:
+ *                 type: number
+ *               frequency:
+ *                 type: string
+ *                 enum: [daily, weekly, monthly]
+ *     responses:
+ *       201:
+ *         description: Schedule created
+ *       400:
+ *         description: Validation error
+ *
+ * /stream/schedules:
+ *   get:
+ *     tags: [Stream]
+ *     summary: List all recurring donation schedules
+ *     security:
+ *       - ApiKeyAuth: []
+ *     responses:
+ *       200:
+ *         description: List of schedules
+ *
+ * /stream/schedules/{id}:
+ *   get:
+ *     tags: [Stream]
+ *     summary: Get a specific schedule
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Schedule details
+ *       404:
+ *         description: Schedule not found
+ *   delete:
+ *     tags: [Stream]
+ *     summary: Cancel a recurring donation schedule
+ *     security:
+ *       - ApiKeyAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Schedule cancelled
+ *       404:
+ *         description: Schedule not found
+ */
+
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
@@ -68,7 +148,7 @@ const streamScheduleIdSchema = validateSchema({
  * POST /stream/create
  * Create a recurring donation schedule
  */
-router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeout(TIMEOUTS.stream), checkPermission(PERMISSIONS.STREAM_CREATE), streamCreateSchema, async (req, res) => {
+router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeout(TIMEOUTS.stream), checkPermission(PERMISSIONS.STREAM_CREATE), streamCreateSchema, async (req, res, next) => {
   try {
     const { donorPublicKey, recipientPublicKey, amount, frequency } = req.body;
 
@@ -201,12 +281,14 @@ router.post('/create', payloadSizeLimiter(ENDPOINT_LIMITS.stream), requestTimeou
 
 /**
  * GET /stream/schedules
- * Get all recurring donation schedules
+ * Get all recurring donation schedules.
+ * Supports optional ?status= filter (e.g. ?status=paused).
  */
-router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, res) => {
+router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, res, next) => {
   try {
-    const schedules = await Database.query(
-      `SELECT
+    const { status } = req.query;
+
+    let query = `SELECT
         rd.id,
         rd.amount,
         rd.frequency,
@@ -215,18 +297,124 @@ router.get('/schedules', checkPermission(PERMISSIONS.STREAM_READ), async (req, r
         rd.lastExecutionDate,
         rd.status,
         rd.executionCount,
+        rd.pausedAt,
+        rd.resumedAt,
         donor.publicKey as donorPublicKey,
         recipient.publicKey as recipientPublicKey
        FROM recurring_donations rd
        JOIN users donor ON rd.donorId = donor.id
-       JOIN users recipient ON rd.recipientId = recipient.id
-       ORDER BY rd.createdAt DESC`
-    );
+       JOIN users recipient ON rd.recipientId = recipient.id`;
+
+    const params = [];
+    if (status) {
+      query += ' WHERE rd.status = ?';
+      params.push(status);
+    }
+    query += ' ORDER BY rd.createdAt DESC';
+
+    const schedules = await Database.query(query, params);
 
     res.json({
       success: true,
       data: schedules,
       count: schedules.length
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /stream/schedules/:id/pause
+ * Pause an active recurring donation schedule.
+ * Returns 409 if the schedule is already paused.
+ */
+router.post('/schedules/:id/pause', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, async (req, res, next) => {
+  try {
+    const schedule = await Database.get(
+      'SELECT id, status FROM recurring_donations WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!schedule) {
+      return res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+
+    if (schedule.status === SCHEDULE_STATUS.PAUSED) {
+      return res.status(409).json({ success: false, error: 'Schedule is already paused' });
+    }
+
+    if (schedule.status !== SCHEDULE_STATUS.ACTIVE) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot pause a schedule with status: ${schedule.status}`
+      });
+    }
+
+    const now = new Date().toISOString();
+    await Database.run(
+      'UPDATE recurring_donations SET status = ?, pausedAt = ? WHERE id = ?',
+      [SCHEDULE_STATUS.PAUSED, now, req.params.id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Recurring donation schedule paused successfully',
+      data: { id: schedule.id, status: SCHEDULE_STATUS.PAUSED, pausedAt: now }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * POST /stream/schedules/:id/resume
+ * Resume a paused recurring donation schedule.
+ * Recalculates nextExecutionDate from now based on frequency.
+ */
+router.post('/schedules/:id/resume', checkPermission(PERMISSIONS.STREAM_UPDATE), streamScheduleIdSchema, async (req, res, next) => {
+  try {
+    const schedule = await Database.get(
+      'SELECT id, status, frequency FROM recurring_donations WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!schedule) {
+      return res.status(404).json({ success: false, error: 'Schedule not found' });
+    }
+
+    if (schedule.status !== SCHEDULE_STATUS.PAUSED) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot resume a schedule with status: ${schedule.status}`
+      });
+    }
+
+    // Recalculate next execution date from now
+    const now = new Date();
+    const nextExecutionDate = new Date(now);
+    switch (schedule.frequency) {
+      case 'daily':  nextExecutionDate.setDate(nextExecutionDate.getDate() + 1); break;
+      case 'weekly': nextExecutionDate.setDate(nextExecutionDate.getDate() + 7); break;
+      case 'monthly': nextExecutionDate.setMonth(nextExecutionDate.getMonth() + 1); break;
+      default: nextExecutionDate.setDate(nextExecutionDate.getDate() + 1);
+    }
+
+    const resumedAt = now.toISOString();
+    await Database.run(
+      'UPDATE recurring_donations SET status = ?, resumedAt = ?, nextExecutionDate = ? WHERE id = ?',
+      [SCHEDULE_STATUS.ACTIVE, resumedAt, nextExecutionDate.toISOString(), req.params.id]
+    );
+
+    res.json({
+      success: true,
+      message: 'Recurring donation schedule resumed successfully',
+      data: {
+        id: schedule.id,
+        status: SCHEDULE_STATUS.ACTIVE,
+        resumedAt,
+        nextExecutionDate: nextExecutionDate.toISOString()
+      }
     });
   } catch (error) {
     next(error);
@@ -249,6 +437,8 @@ router.get('/schedules/:id', checkPermission(PERMISSIONS.STREAM_READ), streamSch
         rd.lastExecutionDate,
         rd.status,
         rd.executionCount,
+        rd.pausedAt,
+        rd.resumedAt,
         donor.publicKey as donorPublicKey,
         recipient.publicKey as recipientPublicKey
        FROM recurring_donations rd

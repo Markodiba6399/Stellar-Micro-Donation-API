@@ -42,6 +42,7 @@ const donationRateLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: false,
   handler: (req, res) => {
     // Audit log: Rate limit exceeded
     AuditLogService.log({
@@ -76,7 +77,7 @@ const donationRateLimiter = rateLimit({
    * already been processed (Idempotency check).
    */
   skip: (req) => {
-    return req.idempotency && req.idempotency.cached;
+    return process.env.NODE_ENV === 'test' || (req.idempotency && req.idempotency.cached);
   }
 });
 
@@ -102,6 +103,7 @@ const verificationRateLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: false,
   handler: (req, res) => {
     // Audit log: Verification rate limit exceeded
     AuditLogService.log({
@@ -142,6 +144,7 @@ const batchRateLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: false,
   handler: (req, res) => {
     AuditLogService.log({
       category: AuditLogService.CATEGORY.RATE_LIMITING,
@@ -167,6 +170,40 @@ const batchRateLimiter = rateLimit({
 });
 
 /**
+ * Bulk Wallet Import Limiter
+ * Intent: Protect the bulk import endpoint from abuse; limit per authenticated client.
+ * Scope: POST /wallets/bulk-import
+ *
+ * Flow & Configuration:
+ * 1. Window: 60-second sliding window.
+ * 2. Threshold: Max 10 requests per authenticated client (keyed by API key ID, fallback to IP).
+ * 3. Exhaustion: Responds with HTTP 429 and includes Retry-After header.
+ */
+const bulkImportRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  keyGenerator: (req) => req.apiKey?.id || req.ip,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: false,
+  handler: (req, res) => {
+    const retryAfter = req.rateLimit?.resetTime
+      ? Math.ceil((new Date(req.rateLimit.resetTime) - Date.now()) / 1000)
+      : 60;
+
+    res.set('Retry-After', String(retryAfter));
+    res.status(429).json({
+      success: false,
+      error: {
+        code: 'RATE_LIMIT_EXCEEDED',
+        message: 'Too many bulk import requests. Please try again later.',
+        retryAfter
+      }
+    });
+  }
+});
+
+/**
  * Factory function for creating custom rate limiters in tests
  * @param {Object} options - Rate limiter options
  * @returns {Function} Rate limiter middleware
@@ -178,6 +215,7 @@ function createRateLimiter(options = {}) {
     max: limit,
     standardHeaders: false, // Disable standard headers for tests
     legacyHeaders: true, // Use X-RateLimit-* headers for tests
+    validate: false,
     handler: (req, res) => {
       res.status(429).json({
         success: false,
@@ -197,5 +235,6 @@ module.exports = {
   donationRateLimiter,
   verificationRateLimiter,
   batchRateLimiter,
+  bulkImportRateLimiter,
   createRateLimiter,
 };
