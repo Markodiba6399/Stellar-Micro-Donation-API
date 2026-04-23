@@ -33,7 +33,10 @@ class RecurringDonationScheduler {
    * @param {Object} stellarService - StellarService or MockStellarService instance
    */
   constructor(stellarService) {
-    this.stellarService = stellarService || null;
+    if (!stellarService) {
+      throw new Error('stellarService is required');
+    }
+    this.stellarService = stellarService;
     this.intervalId = null;
     this.isRunning = false;
 
@@ -723,7 +726,9 @@ class RecurringDonationScheduler {
 
 // Export class for use with `new`, but also export a default instance
 // so tests that expect `require(...)` to return an object work
-const _instance = new RecurringDonationScheduler(null);
+// Create a dummy stellar service for the default instance
+const _dummyStellarService = { sendPayment: async () => {} };
+const _instance = new RecurringDonationScheduler(_dummyStellarService);
 _instance.Class = RecurringDonationScheduler;
 module.exports = _instance;
 module.exports.Class = RecurringDonationScheduler;
