@@ -60,4 +60,60 @@ router.delete('/:id', requireApiKey, asyncHandler(async (req, res, next) => {
   }
 }));
 
+/**
+ * GET /webhooks/:id/deliveries
+ * Get delivery history for a specific webhook.
+ * Query params: limit (default: 50), offset (default: 0)
+ */
+router.get('/:id/deliveries', requireApiKey, asyncHandler(async (req, res, next) => {
+  try {
+    const webhookId = parseInt(req.params.id, 10);
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+
+    if (isNaN(webhookId)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: { message: 'Invalid webhook ID' } 
+      });
+    }
+
+    const deliveries = await WebhookService.WebhookService.getDeliveryHistory(webhookId, { limit, offset });
+    res.json({ 
+      success: true, 
+      data: deliveries, 
+      count: deliveries.length,
+      pagination: { limit, offset }
+    });
+  } catch (err) {
+    next(err);
+  }
+}));
+
+/**
+ * POST /webhooks/dead-letters/:id/replay
+ * Manually trigger a retry for a dead-letter webhook.
+ */
+router.post('/dead-letters/:id/replay', requireApiKey, asyncHandler(async (req, res, next) => {
+  try {
+    const deadLetterId = parseInt(req.params.id, 10);
+    
+    if (isNaN(deadLetterId)) {
+      return res.status(400).json({ 
+        success: false, 
+        error: { message: 'Invalid dead-letter ID' } 
+      });
+    }
+
+    await WebhookService.WebhookService.replayDeadLetter(deadLetterId);
+    res.json({ 
+      success: true, 
+      message: 'Dead-letter webhook scheduled for retry' 
+    });
+  } catch (err) {
+    if (err.status === 404) return res.status(404).json({ success: false, error: { message: err.message } });
+    next(err);
+  }
+}));
+
 module.exports = router;

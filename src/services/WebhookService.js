@@ -26,8 +26,14 @@ const BASE_BACKOFF_MS = 1000;
 const MAX_CONSECUTIVE_FAILURES = 5;
 
 /** Retry queue constants */
-const RETRY_BASE_DELAY_MS = 30_000;   // 30 s
-const RETRY_MAX_ATTEMPTS = 6;
+const RETRY_DELAYS_MS = [
+  60 * 1000,        // 1 minute
+  5 * 60 * 1000,    // 5 minutes
+  30 * 60 * 1000,   // 30 minutes
+  2 * 60 * 60 * 1000,  // 2 hours
+  24 * 60 * 60 * 1000  // 24 hours
+];
+const RETRY_MAX_ATTEMPTS = 5;
 
 class WebhookService {
   /**
@@ -45,6 +51,7 @@ class WebhookService {
         api_key_id INTEGER,
         is_active INTEGER NOT NULL DEFAULT 1,
         consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        owner_email TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -71,6 +78,19 @@ class WebhookService {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await Database.run(`
+      CREATE TABLE IF NOT EXISTS webhook_delivery_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        webhook_id INTEGER NOT NULL,
+        event TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        attempt INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL,
+        status_code INTEGER,
+        error_message TEXT,
+        delivered_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
   }
 
   /**
@@ -80,9 +100,10 @@ class WebhookService {
    * @param {string[]} params.events
    * @param {string} [params.secret]
    * @param {number|null} [params.apiKeyId]
+   * @param {string} [params.ownerEmail]
    * @returns {Promise<Object>}
    */
-  async register({ url, events, secret, apiKeyId = null }) {
+  async register({ url, events, secret, apiKeyId = null, ownerEmail = null }) {
     if (!url) { const e = new Error('url is required'); e.status = 400; throw e; }
     if (!events || events.length === 0) { const e = new Error('events must be a non-empty array'); e.status = 400; throw e; }
     try { new URL(url); } catch { const e = new Error('Invalid webhook URL'); e.status = 400; throw e; }
@@ -92,10 +113,10 @@ class WebhookService {
 
     const Database = require('../utils/database');
     const result = await Database.run(
-      `INSERT INTO webhooks (url, events, secret, api_key_id) VALUES (?, ?, ?, ?)`,
-      [url, eventsStr, resolvedSecret, apiKeyId]
+      `INSERT INTO webhooks (url, events, secret, api_key_id, owner_email) VALUES (?, ?, ?, ?, ?)`,
+      [url, eventsStr, resolvedSecret, apiKeyId, ownerEmail]
     );
-    return { id: result.id, url, events, secret: resolvedSecret, isActive: true };
+    return { id: result.id, url, events, secret: resolvedSecret, isActive: true, ownerEmail };
   }
 
   /**
@@ -129,8 +150,9 @@ class WebhookService {
 
   /**
    * Schedule a retry for a failed webhook delivery.
-   * Exponential backoff: delay = RETRY_BASE_DELAY_MS * 2^attempt (capped at RETRY_MAX_ATTEMPTS).
-   * Promotes to dead-letter when max attempts exceeded.
+   * Uses fixed delays: 1min, 5min, 30min, 2hr, 24hr
+   * Promotes to dead-letter when max attempts (5) exceeded.
+   * Notifies webhook owner after final failure.
    *
    * @param {Object} params
    * @param {number} params.webhookId
@@ -143,6 +165,13 @@ class WebhookService {
   static async scheduleRetry({ webhookId, event, payload, attempt = 0, lastError = null }) {
     const Database = require('../utils/database');
 
+    // Log delivery attempt
+    await Database.run(
+      `INSERT INTO webhook_delivery_history (webhook_id, event, payload, attempt, status, error_message)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [webhookId, event, JSON.stringify(payload), attempt + 1, 'failed', lastError]
+    );
+
     if (attempt >= RETRY_MAX_ATTEMPTS) {
       await Database.run(
         `INSERT INTO webhook_dead_letters (webhook_id, event, payload, attempts, last_error)
@@ -150,10 +179,17 @@ class WebhookService {
         [webhookId, event, JSON.stringify(payload), attempt, lastError]
       );
       log.warn('WEBHOOK_SERVICE', 'Delivery moved to dead-letter', { webhookId, event, attempt });
+      
+      // Notify webhook owner
+      const webhook = await Database.get(`SELECT * FROM webhooks WHERE id = ?`, [webhookId]);
+      if (webhook && webhook.owner_email) {
+        await WebhookService._notifyOwnerOfFailure(webhook, event, attempt, lastError);
+      }
+      
       return;
     }
 
-    const delayMs = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+    const delayMs = RETRY_DELAYS_MS[attempt];
     const nextRetryAt = new Date(Date.now() + delayMs).toISOString();
 
     await Database.run(
@@ -244,6 +280,65 @@ class WebhookService {
     const payload = (() => { try { return JSON.parse(entry.payload); } catch { return {}; } })();
     await WebhookService.scheduleRetry({ webhookId: entry.webhook_id, event: entry.event, payload, attempt: 0 });
     await Database.run(`DELETE FROM webhook_dead_letters WHERE id = ?`, [deadLetterId]);
+  }
+
+  /**
+   * Get delivery history for a specific webhook.
+   * @param {number} webhookId
+   * @param {Object} options
+   * @param {number} [options.limit=50]
+   * @param {number} [options.offset=0]
+   * @returns {Promise<Object[]>}
+   */
+  static async getDeliveryHistory(webhookId, { limit = 50, offset = 0 } = {}) {
+    const Database = require('../utils/database');
+    const rows = await Database.all(
+      `SELECT * FROM webhook_delivery_history 
+       WHERE webhook_id = ? 
+       ORDER BY delivered_at DESC 
+       LIMIT ? OFFSET ?`,
+      [webhookId, limit, offset]
+    );
+    return rows.map(r => ({
+      id: r.id,
+      webhookId: r.webhook_id,
+      event: r.event,
+      payload: (() => { try { return JSON.parse(r.payload); } catch { return r.payload; } })(),
+      attempt: r.attempt,
+      status: r.status,
+      statusCode: r.status_code,
+      errorMessage: r.error_message,
+      deliveredAt: r.delivered_at,
+    }));
+  }
+
+  /**
+   * Notify webhook owner of repeated failures.
+   * @private
+   * @param {Object} webhook
+   * @param {string} event
+   * @param {number} attempts
+   * @param {string} lastError
+   * @returns {Promise<void>}
+   */
+  static async _notifyOwnerOfFailure(webhook, event, attempts, lastError) {
+    log.warn('WEBHOOK_SERVICE', 'Notifying owner of webhook failure', {
+      webhookId: webhook.id,
+      ownerEmail: webhook.owner_email,
+      event,
+      attempts
+    });
+
+    // In a real implementation, this would send an email
+    // For now, we just log it
+    // TODO: Integrate with email service
+    const notification = {
+      to: webhook.owner_email,
+      subject: `Webhook Delivery Failed: ${webhook.url}`,
+      body: `Your webhook (ID: ${webhook.id}) at ${webhook.url} has failed after ${attempts} attempts.\n\nEvent: ${event}\nLast Error: ${lastError}\n\nPlease check your endpoint and consider updating the webhook configuration.`
+    };
+
+    log.info('WEBHOOK_SERVICE', 'Owner notification prepared', notification);
   }
 
   /**
@@ -360,8 +455,16 @@ class WebhookService {
     const signature = WebhookService._sign(body, webhook.secret || '');
 
     try {
-      await WebhookService._httpPost(webhook.url, body, signature, correlationHeaders);
+      const result = await WebhookService._httpPost(webhook.url, body, signature, correlationHeaders);
+      
+      // Log successful delivery
       const Database = require('../utils/database');
+      await Database.run(
+        `INSERT INTO webhook_delivery_history (webhook_id, event, payload, attempt, status, status_code)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [webhook.id, event, JSON.stringify(payload), attempt + 1, 'success', result.statusCode]
+      ).catch(() => {});
+      
       await Database.run(
         `UPDATE webhooks SET consecutive_failures = 0 WHERE id = ?`,
         [webhook.id]
