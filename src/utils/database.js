@@ -26,6 +26,8 @@ const DEFAULT_POOL_SIZE = 5;
 const DEFAULT_POOL_MIN = 1;
 const DEFAULT_POOL_MAX = 10;
 const DEFAULT_ACQUIRE_TIMEOUT = TIMEOUT_DEFAULTS.DATABASE;
+const DEFAULT_QUERY_TIMEOUT_MS = 5000;
+const SLOW_QUERY_WARN_MS = 1000;
 const HEALTH_CHECK_INTERVAL_MS = 30_000;
 const RECONNECT_BASE_DELAY_MS = 500;
 const RECONNECT_MAX_DELAY_MS = 30_000;
@@ -163,6 +165,11 @@ class Database {
         process.env.DB_ACQUIRE_TIMEOUT,
         DEFAULT_ACQUIRE_TIMEOUT
       ),
+      queryTimeoutMs: this.parsePositiveIntegerEnv(
+        'DB_QUERY_TIMEOUT_MS',
+        process.env.DB_QUERY_TIMEOUT_MS,
+        DEFAULT_QUERY_TIMEOUT_MS
+      ),
     };
   }
 
@@ -247,6 +254,15 @@ class Database {
         thresholdMs,
         sql,
         params,
+        failed,
+        timedOut,
+      });
+    } else if (normalizedDurationMs > SLOW_QUERY_WARN_MS) {
+      // Always warn for queries exceeding 1 second regardless of configured threshold (issue #743)
+      log.warn('DATABASE', 'Slow query (>1s)', {
+        method,
+        durationMs: normalizedDurationMs,
+        sql,
         failed,
         timedOut,
       });
@@ -498,6 +514,7 @@ class Database {
       state.poolMin = config.poolMin;
       state.poolMax = config.poolMax;
       state.acquireTimeout = config.acquireTimeout;
+      state.queryTimeoutMs = config.queryTimeoutMs;
       state.closing = false;
       this.performanceState.slowQueryThresholdMs = performanceConfig.slowQueryThresholdMs;
       this.performanceState.slowQueryBufferSize = performanceConfig.slowQueryBufferSize;
@@ -770,14 +787,14 @@ class Database {
     try {
       return await withTimeout(
         statementPromise,
-        TIMEOUT_DEFAULTS.DATABASE,
+        this.poolState.queryTimeoutMs || DEFAULT_QUERY_TIMEOUT_MS,
         `database_${method}`
       );
     } catch (error) {
       if (error instanceof TimeoutError) {
         timedOut = true;
+        const durationMs = Number(process.hrtime.bigint() - startTimeNs) / 1e6;
         if (!completed) {
-          const durationMs = Number(process.hrtime.bigint() - startTimeNs) / 1e6;
           Database.recordQueryExecution({
             method,
             sql,
@@ -788,6 +805,13 @@ class Database {
           });
           completed = true;
         }
+        const timeoutError = new DatabaseError(
+          `QUERY_TIMEOUT: query exceeded ${this.poolState.queryTimeoutMs || DEFAULT_QUERY_TIMEOUT_MS}ms (actual: ${durationMs.toFixed(1)}ms) — ${sql.slice(0, 200)}`
+        );
+        timeoutError.code = 'QUERY_TIMEOUT';
+        timeoutError.sql = sql.slice(0, 200);
+        timeoutError.durationMs = durationMs;
+        throw timeoutError;
       }
 
       throw error;
@@ -1066,6 +1090,7 @@ class Database {
     state.poolMin = DEFAULT_POOL_MIN;
     state.poolMax = DEFAULT_POOL_MAX;
     state.acquireTimeout = DEFAULT_ACQUIRE_TIMEOUT;
+    state.queryTimeoutMs = DEFAULT_QUERY_TIMEOUT_MS;
     state.nextConnectionId = 1;
     state.pendingCreations = 0;
     state.queueDrainInProgress = false;
