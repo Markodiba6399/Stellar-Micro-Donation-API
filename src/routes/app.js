@@ -416,6 +416,9 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
   });
 });
 
+// Circuit breaker admin endpoints (issue #736)
+app.use('/admin/circuit-breaker', requireApiKey, require('./admin/circuitBreaker'));
+
 // Transaction inspection (admin only)
 app.use('/admin/inspect/xdr', require('../middleware/rbac').requireAdmin(), adminInspectRoutes);
 
