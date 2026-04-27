@@ -982,7 +982,28 @@ router.get('/', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async 
 
     const pagination = parseCursorPaginationQuery(req.query);
     const [sortBy, order] = sort ? sort.split(':') : ['timestamp', 'desc'];
-    const result = donationService.getPaginatedDonations(pagination, { sortBy, order });
+
+    // #766: parse filter params from query string
+    const { status, from, to, minAmount, maxAmount } = req.query;
+
+    // Support comma-separated status values (e.g. ?status=pending,processing)
+    let statusFilter;
+    if (status) {
+      const statuses = status.split(',').map(s => s.trim()).filter(Boolean);
+      statusFilter = statuses.length === 1 ? statuses[0] : statuses;
+    }
+
+    const filters = {
+      sortBy,
+      order,
+      ...(statusFilter !== undefined && { status: statusFilter }),
+      ...(from && { startDate: from }),
+      ...(to && { endDate: to }),
+      ...(minAmount !== undefined && { minAmount }),
+      ...(maxAmount !== undefined && { maxAmount }),
+    };
+
+    const result = donationService.getPaginatedDonations(pagination, filters);
     res.setHeader('X-Total-Count', String(result.totalCount));
 
     if (req.query.envelope === 'true') {
