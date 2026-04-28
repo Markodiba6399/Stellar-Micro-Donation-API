@@ -21,6 +21,7 @@ const { buildErrorResponse } = require('../utils/validationErrorFormatter');
 const { validateSchema } = require('../middleware/schemaValidation');
 const { cacheMiddleware } = require('../middleware/caching');
 const { validateDataEntry } = require('../middleware/validateDataEntry');
+const { toWalletResponse } = require('../utils/responseSanitizer');
 
 const requireAuth = requireAdmin;
 const requirePermission = (perm) => checkPermission(perm);
@@ -307,7 +308,7 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.wallet), checkPermission(PER
 
     res.status(201).json({
       success: true,
-      data: wallet
+      data: toWalletResponse(wallet)
     });
   } catch (error) {
     next(error);
@@ -344,7 +345,7 @@ router.get('/', checkPermission(PERMISSIONS.WALLETS_READ), cacheMiddleware('wall
 
     res.json({
       success: true,
-      data: result.data,
+      data: result.data.map(toWalletResponse),
       count: result.data.length,
       total: result.totalCount,
       nextCursor: result.meta.next_cursor,
@@ -444,7 +445,7 @@ router.get('/:id', checkPermission(PERMISSIONS.WALLETS_READ), walletIdSchema, ca
 
     const stellarSvc = getStellarService();
     const homeDomain = await stellarSvc.getHomeDomain(wallet.address || wallet.publicKey).catch(() => null);
-    res.json({ success: true, data: { ...wallet, homeDomain: homeDomain || null } });
+    res.json({ success: true, data: toWalletResponse({ ...wallet, homeDomain: homeDomain || null }) });
   } catch (error) {
     next(error);
   }
@@ -483,7 +484,7 @@ router.patch('/:id', checkPermission(PERMISSIONS.WALLETS_UPDATE), payloadSizeLim
       details: { walletId: req.params.id, updates: { label, ownerName } }
     });
 
-    res.json({ success: true, data: wallet });
+    res.json({ success: true, data: toWalletResponse(wallet) });
   } catch (error) {
     next(error);
   }
@@ -954,13 +955,13 @@ router.delete('/:id', checkPermission(PERMISSIONS.WALLETS_DELETE), walletIdSchem
  */
 router.get('/admin/deleted', requireAdmin(), asyncHandler(async (req, res, next) => {
   try {
-    const deletedWallets = await Database.query('SELECT * FROM users WHERE deleted_at IS NULL');
+    const deletedWallets = await Database.query('SELECT * FROM users WHERE deleted_at IS NOT NULL');
     const deletedTransactions = await Database.query('SELECT * FROM transactions WHERE deleted_at IS NOT NULL');
 
     res.json({
       success: true,
       data: {
-        wallets: deletedWallets,
+        wallets: deletedWallets.map(toWalletResponse),
         transactions: deletedTransactions
       }
     });
