@@ -235,8 +235,9 @@ router.get('/daily', checkPermission(PERMISSIONS.STATS_READ), auditStatsAccess, 
     const { startDate, endDate } = req.query;
     const start = new Date(startDate);
     const end = new Date(endDate);
+    const isAdmin = req.user && req.user.role === 'admin';
 
-    const stats = StatsService.getDailyStats(start, end);
+    const stats = StatsService.getDailyStats(start, end, 'UTC', isAdmin);
 
     AuditLogService.log({
       category: AuditLogService.CATEGORY.DATA_ACCESS,
@@ -284,8 +285,9 @@ router.get(
       const { startDate, endDate } = req.query;
       const start = new Date(startDate);
       const end = new Date(endDate);
+      const isAdmin = req.user && req.user.role === 'admin';
 
-      const stats = StatsService.getWeeklyStats(start, end);
+      const stats = StatsService.getWeeklyStats(start, end, isAdmin);
 
       res.json({
         success: true,
@@ -383,8 +385,9 @@ router.get(
       const { startDate, endDate } = req.query;
       const start = new Date(startDate);
       const end = new Date(endDate);
+      const isAdmin = req.user && req.user.role === 'admin';
 
-      const stats = StatsService.getDonorStats(start, end);
+      const stats = StatsService.getDonorStats(start, end, isAdmin);
 
       res.json({
         success: true,
@@ -419,8 +422,9 @@ router.get(
       const { startDate, endDate } = req.query;
       const start = new Date(startDate);
       const end = new Date(endDate);
+      const isAdmin = req.user && req.user.role === 'admin';
 
-      const stats = StatsService.getRecipientStats(start, end);
+      const stats = StatsService.getRecipientStats(start, end, isAdmin);
 
       res.json({
         success: true,
@@ -473,6 +477,7 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
   try {
     const { walletAddress } = req.params;
     const { startDate, endDate } = req.query;
+    const isAdmin = req.user && req.user.role === 'admin';
 
     let start = null;
     let end = null;
@@ -494,7 +499,7 @@ router.get('/wallet/:walletAddress/analytics', checkPermission(PERMISSIONS.STATS
       }
     }
 
-    const analytics = StatsService.getWalletAnalytics(walletAddress, start, end);
+    const analytics = StatsService.getWalletAnalytics(walletAddress, start, end, isAdmin);
 
     if (analytics.donationCount === 0) {
       return res.status(404).json({
@@ -620,6 +625,7 @@ router.get('/orphaned-transactions', checkPermission(PERMISSIONS.STATS_READ), as
 router.get('/dashboard', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) => {
   try {
     const { period = '30d', granularity, topN, movingAvgWindow } = req.query;
+    const isAdmin = req.user && req.user.role === 'admin';
 
     const topNParsed = topN !== undefined ? parseInt(topN, 10) : 10;
     const windowParsed = movingAvgWindow !== undefined ? parseInt(movingAvgWindow, 10) : 3;
@@ -631,7 +637,7 @@ router.get('/dashboard', checkPermission(PERMISSIONS.STATS_READ), (req, res, nex
       return res.status(400).json({ success: false, error: { code: 'INVALID_PARAM', message: 'granularity must be hourly, daily, weekly, or monthly' } });
     }
 
-    const data = StatsService.getDashboardData({ period, granularity, topN: topNParsed, movingAvgWindow: windowParsed });
+    const data = StatsService.getDashboardData({ period, granularity, topN: topNParsed, movingAvgWindow: windowParsed, isAdmin });
 
     res.json({ success: true, data });
   } catch (error) {
