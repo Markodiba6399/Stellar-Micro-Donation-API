@@ -47,7 +47,7 @@ const donationRateLimiter = rateLimit({
     }
   },
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   validate: false,
   handler: (req, res) => {
     // Audit log: Rate limit exceeded
@@ -117,7 +117,7 @@ const verificationRateLimiter = rateLimit({
     }
   },
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   validate: false,
   handler: (req, res) => {
     const isKeyBased = req.apiKey && req.apiKey.id && !req.apiKey.isLegacy;
@@ -172,7 +172,7 @@ const batchRateLimiter = rateLimit({
   max: 1,
   keyGenerator: (req) => req.apiKey?.id || req.ip,
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   validate: false,
   handler: (req, res) => {
     const identifier = req.apiKey?.id ? `api-key:${req.apiKey.id}` : `ip:${req.ip}`;
@@ -215,7 +215,7 @@ const bulkImportRateLimiter = rateLimit({
   max: 10,
   keyGenerator: (req) => req.apiKey?.id || req.ip,
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   validate: false,
   handler: (req, res) => {
     const retryAfter = req.rateLimit?.resetTime
@@ -278,7 +278,7 @@ const authTokenRateLimiter = rateLimit({
   max: parseInt(process.env.AUTH_TOKEN_RATE_LIMIT || '10'),
   keyGenerator: (req) => req.ip,
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   validate: false,
   handler: (req, res) => {
     const retryAfter = req.rateLimit?.resetTime
@@ -329,7 +329,7 @@ const authRefreshRateLimiter = rateLimit({
   max: parseInt(process.env.AUTH_REFRESH_RATE_LIMIT || '20'),
   keyGenerator: (req) => req.ip,
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   validate: false,
   handler: (req, res) => {
     const retryAfter = req.rateLimit?.resetTime
@@ -380,7 +380,7 @@ const healthCheckRateLimiter = rateLimit({
   max: 60,
   keyGenerator: (req) => req.ip,
   standardHeaders: true,
-  legacyHeaders: false,
+  legacyHeaders: true,
   validate: false,
   handler: (req, res) => {
     const retryAfter = req.rateLimit?.resetTime
@@ -409,7 +409,7 @@ module.exports = {
     max: 5,
     keyGenerator: (req) => req.apiKey?.id || req.ip,
     standardHeaders: true,
-    legacyHeaders: false,
+    legacyHeaders: true,
     validate: false,
     handler: (req, res) => {
       res.status(429).json({

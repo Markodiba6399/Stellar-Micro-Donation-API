@@ -166,10 +166,15 @@ async function getFullHealth(stellarService, networkStatusService, scheduler, ve
   }
 
   const response = { status, timestamp: new Date().toISOString() };
-  
+
   // Only include detailed dependencies if verbose mode is enabled
   if (verbose) {
     response.dependencies = dependencies;
+
+    // Expose Horizon connection pool health when verbose
+    if (stellarService && typeof stellarService.getPoolStatus === 'function') {
+      response.horizonPool = stellarService.getPoolStatus();
+    }
   }
 
   return response;

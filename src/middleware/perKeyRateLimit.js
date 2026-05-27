@@ -10,10 +10,14 @@ const DEFAULT_WINDOW_SECONDS = 60;
 const store = new Map();
 
 function buildRateLimitHeaders(limit, remaining, resetAt) {
+  const resetUnix = String(Math.ceil(resetAt / 1000));
   return {
+    'RateLimit-Limit': String(limit),
+    'RateLimit-Remaining': String(Math.max(0, remaining)),
+    'RateLimit-Reset': resetUnix,
     'X-RateLimit-Limit': String(limit),
     'X-RateLimit-Remaining': String(Math.max(0, remaining)),
-    'X-RateLimit-Reset': String(Math.ceil(resetAt / 1000)),
+    'X-RateLimit-Reset': resetUnix,
   };
 }
 

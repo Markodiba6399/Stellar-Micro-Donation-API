@@ -1577,9 +1577,10 @@ class DonationService {
    * @throws {BusinessLogicError} If refund fails
    */
   async refundDonation(donationId, { reason, notes, idempotencyKey, recipientSecret, requestId }) {
-    const { BusinessLogicError, DuplicateError } = require('../utils/errors');
-    const config = require('../config');
+    const StellarSdk = require('stellar-sdk');
+    const { BusinessLogicError, DuplicateError, ValidationError } = require('../utils/errors');
     const AuditLogService = require('./AuditLogService');
+    const WebhookService = require('./WebhookService');
 
     log.debug('DONATION_SERVICE', 'Processing refund request', {
       requestId,
@@ -1610,7 +1611,7 @@ class DonationService {
       }
     }
 
-    // Check if donation is already refunded
+    // Double-refund prevention: check if donation is already refunded
     if (donation.status === 'refunded') {
       throw new DuplicateError(
         'Donation has already been refunded',
@@ -1627,31 +1628,40 @@ class DonationService {
       );
     }
 
-    // Check refund eligibility window
-    const donationTimestamp = new Date(donation.timestamp);
-    const now = new Date();
-    const daysSinceDonation = (now - donationTimestamp) / (1000 * 60 * 60 * 24);
-    const eligibilityWindowDays = config.donations.refundEligibilityWindowDays;
+    // Recipient verification: derive public key from recipientSecret and compare to donation.recipient
+    if (recipientSecret) {
+      let derivedPublicKey;
+      try {
+        derivedPublicKey = StellarSdk.Keypair.fromSecret(recipientSecret).publicKey();
+      } catch {
+        throw new ValidationError('recipientSecret is not a valid Stellar secret key');
+      }
+      if (derivedPublicKey !== donation.recipient) {
+        throw new ValidationError('recipientSecret does not match the original donation recipient');
+      }
+    }
 
-    if (daysSinceDonation > eligibilityWindowDays) {
+    // Check refund eligibility window (hours-based, default 24)
+    const refundWindowHours = parseInt(process.env.REFUND_WINDOW_HOURS || '24', 10);
+    const donationTimestamp = new Date(donation.timestamp);
+    const hoursSinceDonation = (Date.now() - donationTimestamp.getTime()) / (1000 * 60 * 60);
+
+    if (hoursSinceDonation > refundWindowHours) {
       throw new BusinessLogicError(
-        ERROR_CODES.TRANSACTION_FAILED,
-        `Refund window has expired. Donations can only be refunded within ${eligibilityWindowDays} days of creation.`,
+        'REFUND_WINDOW_EXPIRED',
+        `Refund window has expired. Donations can only be refunded within ${refundWindowHours} hours of creation.`,
         {
           donationId,
           donationDate: donation.timestamp,
-          daysSinceDonation: Math.floor(daysSinceDonation),
-          eligibilityWindowDays
+          hoursSinceDonation: Math.floor(hoursSinceDonation),
+          refundWindowHours
         }
       );
     }
 
     // Determine the secret key to use for signing the refund transaction.
-    // If the caller provides recipientSecret (over HTTPS), use it directly and never log it.
-    // Otherwise fall back to the encrypted secret stored in the DB.
     let secret;
     if (recipientSecret) {
-      // Use caller-provided key in-memory only — never log this value
       secret = recipientSecret;
     } else {
       const sender = await this.getUserById(donation.senderId || 1, 'Sender');
@@ -1664,18 +1674,44 @@ class DonationService {
       donationId,
       amount: donation.amount,
       originalTxId: donation.stellarTxId
-      // NOTE: secret key is intentionally NOT logged
     });
 
-    // Create reverse Stellar transaction
-    const reverseResult = await this.stellarService.sendDonation({
-      sourceSecret: secret,
-      destinationPublic: donation.donor,
-      amount: donation.amount,
-      memo: `REFUND:${donationId}`
-    });
+    // Record refund as pending before submitting to Stellar
+    const pendingRecord = await Database.run(
+      `INSERT INTO refunds (
+        original_donation_id, reverse_transaction_id, amount, reason, notes,
+        idempotency_key, refunded_at, stellar_ledger, status
+      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
+      [
+        donationId,
+        `pending_${Date.now()}`,
+        donation.amount,
+        reason || null,
+        notes || null,
+        idempotencyKey || null,
+        null,
+        'pending'
+      ]
+    );
 
-    // Immediately discard the secret from local scope
+    // Update status to processing
+    await Database.run(`UPDATE refunds SET status = 'processing' WHERE id = ?`, [pendingRecord.id]);
+
+    let reverseResult;
+    try {
+      reverseResult = await this.stellarService.sendDonation({
+        sourceSecret: secret,
+        destinationPublic: donation.donor,
+        amount: donation.amount,
+        memo: `REFUND:${donationId}`
+      });
+    } catch (stellarErr) {
+      await Database.run(`UPDATE refunds SET status = 'failed' WHERE id = ?`, [pendingRecord.id]);
+      secret = null;
+      throw stellarErr;
+    }
+
+    // Immediately discard the secret
     secret = null;
 
     log.debug('DONATION_SERVICE', 'Reverse transaction successful', {
@@ -1684,45 +1720,42 @@ class DonationService {
       ledger: reverseResult.ledger
     });
 
-    // Record refund in database
-    const refundRecord = await Database.run(
-      `INSERT INTO refunds (
-        original_donation_id, reverse_transaction_id, amount, reason, notes,
-        idempotency_key, refunded_at, stellar_ledger, status
-      ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)`,
-      [
-        donationId,
-        reverseResult.transactionId,
-        donation.amount,
-        reason || 'No reason provided',
-        notes || null,
-        idempotencyKey || null,
-        reverseResult.ledger,
-        'completed'
-      ]
+    // Update refund record to completed
+    await Database.run(
+      `UPDATE refunds SET reverse_transaction_id = ?, stellar_ledger = ?, status = 'completed' WHERE id = ?`,
+      [reverseResult.transactionId, reverseResult.ledger, pendingRecord.id]
     );
 
     // Update original donation status to refunded
     Transaction.updateStatus(donationId, 'refunded', {
-      refundId: refundRecord.id,
+      refundId: pendingRecord.id,
       reverseTxId: reverseResult.transactionId,
       reverseLedger: reverseResult.ledger,
       refundedAt: new Date().toISOString()
     });
 
+    // Emit donation.refunded webhook event
+    WebhookService.deliver('donation.refunded', {
+      donationId,
+      refundId: pendingRecord.id,
+      amount: donation.amount,
+      reverseTxId: reverseResult.transactionId,
+      reason: reason || null,
+      refundedAt: new Date().toISOString(),
+    }).catch(() => {});
+
     // Log refund in audit trail
     await AuditLogService.log({
       category: AuditLogService.CATEGORY.FINANCIAL_OPERATION,
-      action: AuditLogService.ACTION.DONATION_CREATED, // Reusing for refund tracking
+      action: AuditLogService.ACTION.DONATION_CREATED,
       severity: AuditLogService.SEVERITY.MEDIUM,
       result: 'SUCCESS',
-      userId: sender.id,
       requestId,
       resource: `donation:${donationId}`,
       details: {
         operation: 'refund',
         originalDonationId: donationId,
-        refundId: refundRecord.id,
+        refundId: pendingRecord.id,
         amount: donation.amount,
         reason,
         reverseTxId: reverseResult.transactionId,
@@ -1733,12 +1766,12 @@ class DonationService {
     log.info('DONATION_SERVICE', 'Refund processed successfully', {
       requestId,
       donationId,
-      refundId: refundRecord.id,
+      refundId: pendingRecord.id,
       reverseTxId: reverseResult.transactionId
     });
 
     return {
-      refundId: refundRecord.id,
+      refundId: pendingRecord.id,
       originalDonationId: donationId,
       reverseTxId: reverseResult.transactionId,
       reverseLedger: reverseResult.ledger,
