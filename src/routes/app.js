@@ -841,6 +841,14 @@ async function startServer() {
           log.info("SHUTDOWN", "Replay detection cleanup timer stopped");
         }
 
+        // Checkpoint SQLite WAL before closing
+        try {
+          await Database.run('PRAGMA wal_checkpoint(TRUNCATE)');
+          log.info("SHUTDOWN", "SQLite WAL checkpoint completed");
+        } catch (err) {
+          log.warn("SHUTDOWN", "Error checkpointing WAL", { error: err.message });
+        }
+
         await Database.close();
         log.info("SHUTDOWN", "Database pool closed");
 
