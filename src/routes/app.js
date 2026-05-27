@@ -36,6 +36,7 @@ const dbAdminRoutes = require('./admin/db');
 const adminTracesRoutes = require('./admin/traces');
 const retentionAdminRoutes = require('./admin/retention');
 const backupAdminRoutes = require('./admin/backup');
+const geoRulesAdminRoutes = require('./admin/geoRules');
 const encryptionAdminRoutes = require('./admin/encryption');
 const matchingProgramsAdminRoutes = require('./admin/matchingPrograms');
 const corporateMatchingAdminRoutes = require('./admin/corporateMatching');
@@ -114,6 +115,7 @@ let replayCleanupTimer = null;
 // Graceful shutdown state
 let isShuttingDown = false;
 let inFlightRequests = 0;
+const requestCounter = require('../utils/requestCounter');
 
 // In-flight request tracking and graceful shutdown rejection middleware
 app.use((req, res, next) => {
@@ -125,16 +127,18 @@ app.use((req, res, next) => {
       error: { code: 'SERVICE_UNAVAILABLE', message: 'Server is shutting down' }
     });
   }
-  
+
   inFlightRequests++;
+  requestCounter.increment();
   let handled = false;
   const decrement = () => {
     if (!handled) {
       handled = true;
       inFlightRequests--;
+      requestCounter.decrement();
     }
   };
-  
+
   res.on('finish', decrement);
   res.on('close', decrement);
   next();
@@ -376,6 +380,12 @@ app.get('/suspicious-patterns', require('../middleware/rbac').requireAdmin(), (r
     timestamp: new Date().toISOString()
   });
 });
+
+// Geo-rules management (admin only)
+app.use('/admin/geo-rules', geoRulesAdminRoutes);
+
+// Backup / restore endpoints (admin only) — mounted at /admin so router defines /backup and /backups paths
+app.use('/admin', backupAdminRoutes);
 
 // Transaction inspection (admin only)
 app.use('/admin/inspect/xdr', require('../middleware/rbac').requireAdmin(), adminInspectRoutes);

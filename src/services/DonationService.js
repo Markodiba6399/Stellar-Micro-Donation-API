@@ -18,7 +18,7 @@ const { calculateAnalyticsFee } = require('../utils/feeCalculator');
 const { sanitizeIdentifier, sanitizeMemo } = require('../utils/sanitizer');
 const { generatePseudonymousId } = require('../utils/anonymization');
 const { TRANSACTION_STATES } = require('../utils/transactionStateMachine');
-const { ValidationError, NotFoundError, ERROR_CODES } = require('../utils/errors');
+const { ValidationError, NotFoundError, BusinessLogicError, ERROR_CODES } = require('../utils/errors');
 const { PREDEFINED_TAGS } = require('../constants/tags');
 const { paginateCollection } = require('../utils/pagination');
 const { checkConfirmations } = require('../utils/confirmationChecker');
@@ -44,9 +44,50 @@ const DEFAULT_DESTINATION_ASSET = {
   issuer: null,
 };
 
+const RECIPIENT_ACCOUNT_CACHE_TTL_MS = 60 * 1000;
+const _recipientAccountCache = new Map();
+
 class DonationService {
   constructor(stellarService) {
     this.stellarService = stellarService;
+  }
+
+  /**
+   * Pre-flight check: verify the recipient Stellar account exists.
+   * Result is cached for 60 s per public key.
+   * Skipped when MOCK_STELLAR=true.
+   *
+   * @param {string} publicKey - Stellar public key (G…)
+   * @throws {BusinessLogicError} When account does not exist on the network.
+   */
+  async checkRecipientAccountExists(publicKey) {
+    if (process.env.MOCK_STELLAR === 'true') {
+      return;
+    }
+
+    const now = Date.now();
+    const cached = _recipientAccountCache.get(publicKey);
+    if (cached && now < cached.expiresAt) {
+      if (!cached.exists) {
+        throw new BusinessLogicError(
+          ERROR_CODES.RECIPIENT_ACCOUNT_NOT_FOUND,
+          'Recipient account does not exist on the Stellar network. The recipient must fund their account with at least 1 XLM before receiving donations.'
+        );
+      }
+      return;
+    }
+
+    const info = await this.stellarService.getAccountInfo(publicKey);
+    const exists = !info.notFound && !info.error;
+
+    _recipientAccountCache.set(publicKey, { exists, expiresAt: now + RECIPIENT_ACCOUNT_CACHE_TTL_MS });
+
+    if (!exists) {
+      throw new BusinessLogicError(
+        ERROR_CODES.RECIPIENT_ACCOUNT_NOT_FOUND,
+        'Recipient account does not exist on the Stellar network. The recipient must fund their account with at least 1 XLM before receiving donations.'
+      );
+    }
   }
 
   /**
@@ -620,6 +661,7 @@ class DonationService {
     let conversionRate = null;
 
     if (sourceSecret && sanitizedRecipient) {
+      await this.checkRecipientAccountExists(sanitizedRecipient);
       if (!sourceAssetProvided) {
         stellarResult = await this.stellarService.sendDonation({
           sourceSecret,

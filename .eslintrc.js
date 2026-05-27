@@ -40,8 +40,22 @@ module.exports = {
     'no-eval': 'error',
     'no-implied-eval': 'error',
     'no-new-func': 'error',
-    'no-console': 'off', // We use structured logging
+    'no-console': 'off',
   },
+  overrides: [
+    {
+      // Enforce structured logging in all service source files
+      files: ['src/**/*.js'],
+      excludedFiles: [
+        'src/scripts/**/*.js',
+        'src/utils/log.js',
+        'src/utils/migrationRunner.js',
+      ],
+      rules: {
+        'no-console': 'error',
+      },
+    },
+  ],
   ignorePatterns: [
     'node_modules/',
     'data/',
