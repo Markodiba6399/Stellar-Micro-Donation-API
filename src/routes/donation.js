@@ -1301,18 +1301,51 @@ router.get('/pending', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler
  * Must be registered before /:id to prevent Express matching "recent" as an id.
  *
  * Query params:
- *   - limit {integer} max results to return (default 10, max 100)
+ *   - limit {integer} max results to return (default 10, max configurable via RECENT_DONATIONS_MAX_LIMIT, default 100)
  */
+const Cache = require('../utils/cache');
+const RECENT_MAX_LIMIT = parseInt(process.env.RECENT_DONATIONS_MAX_LIMIT || '100', 10);
+const RECENT_CACHE_TTL_MS = parseInt(process.env.RECENT_DONATIONS_CACHE_TTL_SECONDS || '5', 10) * 1000;
+
+// Invalidate recent donations cache when a new donation is created
+donationEvents.on(donationEvents.EVENTS.CREATED, () => {
+  Cache.clearPrefix('donations:recent:');
+});
+
 router.get('/recent', checkPermission(PERMISSIONS.DONATIONS_READ), asyncHandler(async (req, res, next) => {
   try {
-    const limit = Math.min(parseInt(req.query.limit, 10) || 10, 100);
+    const rawLimit = req.query.limit;
+
+    let limit = 10;
+    if (rawLimit !== undefined) {
+      const parsed = Number(rawLimit);
+      if (!Number.isInteger(parsed) || parsed <= 0 || String(rawLimit).trim() !== String(Math.floor(parsed))) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_LIMIT', message: 'limit must be a positive integer' },
+        });
+      }
+      limit = Math.min(parsed, RECENT_MAX_LIMIT);
+    }
+
+    const cacheKey = `donations:recent:${limit}`;
+    const cached = Cache.get(cacheKey);
+    if (cached) {
+      res.setHeader('X-Cache', 'HIT');
+      return res.json(cached);
+    }
+
     const Database = require('../utils/database');
     const [rows, countRow] = await Promise.all([
-      Database.query(`SELECT * FROM transactions ORDER BY timestamp DESC LIMIT ?`, [limit]),
-      Database.get(`SELECT COUNT(*) AS total FROM transactions`),
+      Database.query('SELECT * FROM transactions ORDER BY timestamp DESC LIMIT ?', [limit]),
+      Database.get('SELECT COUNT(*) AS total FROM transactions'),
     ]);
+
     res.setHeader('X-Total-Count', String(countRow ? countRow.total : rows.length));
-    res.json({ success: true, data: rows, count: rows.length });
+    const body = { success: true, data: rows, count: rows.length };
+    Cache.set(cacheKey, body, RECENT_CACHE_TTL_MS);
+    res.setHeader('X-Cache', 'MISS');
+    res.json(body);
   } catch (error) {
     next(error);
   }
