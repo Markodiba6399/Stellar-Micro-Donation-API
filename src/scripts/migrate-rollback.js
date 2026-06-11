@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
-require('dotenv').config({ path: require('path').join(__dirname, '../src/.env') });
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 
-const { rollbackMigration } = require('../src/utils/migrationRunner');
+const { rollbackMigration } = require('../utils/migrationRunner');
 
 rollbackMigration()
   .then(({ rolledBack }) => {

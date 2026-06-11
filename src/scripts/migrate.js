@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
-require('dotenv').config({ path: require('path').join(__dirname, '../src/.env') });
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 
-const { runMigrations } = require('../src/utils/migrationRunner');
+const { runMigrations } = require('../utils/migrationRunner');
 
 runMigrations()
   .then(({ applied, skipped }) => {

@@ -18,8 +18,17 @@ const STROOPS_PER_XLM = 10_000_000;
 exports.name = '015_amount_precision_stroops';
 
 exports.up = async (db) => {
-  // 1. Add temporary stroops column
-  await db.run(`ALTER TABLE transactions ADD COLUMN amount_stroops INTEGER`);
+  // 1. Add temporary stroops column (tolerate re-runs after a partial failure —
+  //    the steps below are not atomic)
+  try {
+    await db.run(`ALTER TABLE transactions ADD COLUMN amount_stroops INTEGER`);
+  } catch (_) { /* column already exists */ }
+
+  // Fresh databases never ran the legacy scripts/migrations/addTenantId.js,
+  // so the tenant_id column selected by the rebuild below may not exist yet.
+  try {
+    await db.run(`ALTER TABLE transactions ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'`);
+  } catch (_) { /* column already exists */ }
 
   // 2. Convert existing REAL amounts to stroops
   await db.run(
@@ -28,6 +37,7 @@ exports.up = async (db) => {
 
   // 3. Rebuild the table without the old REAL column
   //    SQLite requires a full table rebuild to drop a column.
+  await db.run(`DROP TABLE IF EXISTS transactions_new`);
   await db.run(`
     CREATE TABLE transactions_new (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -74,6 +84,7 @@ exports.up = async (db) => {
 
 exports.down = async (db) => {
   // Rebuild table converting stroops back to REAL XLM
+  await db.run(`DROP TABLE IF EXISTS transactions_old`);
   await db.run(`
     CREATE TABLE transactions_old (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
