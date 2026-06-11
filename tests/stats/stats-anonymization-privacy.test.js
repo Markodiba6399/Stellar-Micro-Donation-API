@@ -279,9 +279,11 @@ describe('Stats Anonymization Privacy', () => {
       app = express();
       app.use(express.json());
       
-      // Mock middleware
+      // Mock middleware — the real app attaches req.user globally via
+      // attachUserRole(); mirror that here with a non-admin user
       app.use((req, res, next) => {
         req.id = 'test-req-id';
+        req.user = { role: 'guest', id: 'test-user' };
         next();
       });
       

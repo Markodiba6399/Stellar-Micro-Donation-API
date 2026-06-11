@@ -1,21 +1,28 @@
 /**
  * SseManager
- * Manages SSE connections for the transactions channel.
- * Supports filtering by walletAddress / campaignId / window, heartbeats,
- * and per-key connection limits.
+ * Manages SSE connections for streaming endpoints (transaction feed,
+ * leaderboard, campaign progress). Clients are keyed by clientId.
+ * Supports filtering by walletAddress / status / amount / campaignId / window,
+ * heartbeats, per-key connection limits, and a bounded event replay buffer
+ * for Last-Event-ID reconnection.
  */
 
 const MAX_CONNECTIONS_PER_KEY = 5;
 const HEARTBEAT_INTERVAL_MS = 30_000;
+const EVENT_BUFFER_SIZE = 100;
 
 class SseManager {
   constructor() {
-    /** @type {Map<string, Set<object>>} apiKey -> Set of client objects */
+    /** @type {Map<string, object>} clientId -> { clientId, apiKey, res, filters } */
     this._clients = new Map();
     /** @type {NodeJS.Timeout|null} */
     this._heartbeatTimer = null;
+    /** @type {Array<{id: number, event: string, data: object}>} replay buffer */
+    this._eventBuffer = [];
+    this._nextEventId = 1;
     this.MAX_CONNECTIONS_PER_KEY = MAX_CONNECTIONS_PER_KEY;
     this.HEARTBEAT_INTERVAL_MS = HEARTBEAT_INTERVAL_MS;
+    this.EVENT_BUFFER_SIZE = EVENT_BUFFER_SIZE;
   }
 
   /**
@@ -38,50 +45,53 @@ class SseManager {
 
   /**
    * Add a new SSE client.
-   * @param {string} apiKey
-   * @param {object} res - Express response object
+   * @param {string} clientId - Unique identifier for this connection
+   * @param {string} apiKey - API key id, used for per-key connection limits
    * @param {object} filters
+   * @param {object} res - Express response object
    * @returns {{ added: boolean, limitExceeded: boolean, client?: object }}
    */
-  addClient(apiKey, res, filters = {}) {
-    const existing = this._clients.get(apiKey) || new Set();
-    if (existing.size >= MAX_CONNECTIONS_PER_KEY) {
+  addClient(clientId, apiKey, filters = {}, res) {
+    if (this.connectionCountForKey(apiKey) >= MAX_CONNECTIONS_PER_KEY) {
       return { added: false, limitExceeded: true };
     }
 
-    const client = { res, filters };
-    existing.add(client);
-    this._clients.set(apiKey, existing);
+    const client = { clientId, apiKey, res, filters: filters || {} };
+    this._clients.set(clientId, client);
 
-    res.on('close', () => this.removeClient(apiKey, client));
+    if (res && typeof res.on === 'function') {
+      res.on('close', () => this.removeClient(clientId));
+    }
 
     return { added: true, limitExceeded: false, client };
   }
 
   /**
-   * Remove a specific client.
-   * @param {string} apiKey
-   * @param {object} client
+   * Remove a client by id.
+   * @param {string} clientId
    */
-  removeClient(apiKey, client) {
-    const set = this._clients.get(apiKey);
-    if (!set) return;
-    set.delete(client);
-    if (set.size === 0) this._clients.delete(apiKey);
+  removeClient(clientId) {
+    this._clients.delete(clientId);
   }
 
   /**
    * Broadcast a generic SSE event to all matching clients.
+   * The event is recorded in the replay buffer so reconnecting clients can
+   * catch up via Last-Event-ID.
    * @param {string} event
    * @param {object} data
    */
   broadcast(event, data) {
-    const payload = this._formatSse(event, data);
-    for (const clients of this._clients.values()) {
-      for (const client of clients) {
-        if (this._matches(client.filters, data)) {
-          try { client.res.write(payload); } catch (_) { /* client gone */ }
-        }
+    const id = this._nextEventId++;
+    this._eventBuffer.push({ id, event, data });
+    if (this._eventBuffer.length > EVENT_BUFFER_SIZE) {
+      this._eventBuffer.shift();
+    }
+
+    const payload = this._formatSse(event, data, id);
+    for (const client of this._clients.values()) {
+      if (this._matches(client.filters, data)) {
+        try { client.res.write(payload); } catch (_) { /* client gone */ }
       }
     }
   }
@@ -98,9 +108,7 @@ class SseManager {
    * Return total number of connected clients (all keys).
    */
   get connectionCount() {
-    let n = 0;
-    for (const s of this._clients.values()) n += s.size;
-    return n;
+    return this._clients.size;
   }
 
   /**
@@ -108,22 +116,25 @@ class SseManager {
    * @param {string} apiKey
    */
   connectionCountForKey(apiKey) {
-    return (this._clients.get(apiKey) || new Set()).size;
+    let n = 0;
+    for (const client of this._clients.values()) {
+      if (client.apiKey === apiKey) n++;
+    }
+    return n;
   }
 
   /**
    * Return stats for all active SSE connections.
    */
   getStats() {
-    const byKey = {};
-    for (const [key, clients] of this._clients.entries()) {
-      byKey[key] = clients.size;
+    const connectionsByKey = {};
+    for (const client of this._clients.values()) {
+      connectionsByKey[client.apiKey] = (connectionsByKey[client.apiKey] || 0) + 1;
     }
 
     return {
-      totalClients: this.connectionCount,
-      activeKeys: Object.keys(byKey).length,
-      clientsByKey: byKey,
+      totalConnections: this._clients.size,
+      connectionsByKey,
     };
   }
 
@@ -144,13 +155,14 @@ class SseManager {
   }
 
   /**
-   * Return missed events since a given Last-Event-ID.
-   * NOTE: This is not supported in the current implementation.
-   * @param {string} lastEventId
-   * @returns {Array}
+   * Return buffered events with an id greater than the given Last-Event-ID.
+   * @param {string|number} lastEventId
+   * @returns {Array<{id: number, event: string, data: object}>}
    */
-  getMissedEvents(_lastEventId) {
-    return [];
+  getMissedEvents(lastEventId) {
+    const lastId = parseInt(lastEventId, 10);
+    if (!Number.isFinite(lastId)) return [];
+    return this._eventBuffer.filter(e => e.id > lastId);
   }
 
   /**
@@ -165,10 +177,8 @@ class SseManager {
   // ---------------------------------------------------------------------------
 
   _sendHeartbeat() {
-    for (const clients of this._clients.values()) {
-      for (const client of clients) {
-        try { client.res.write(': ping\n\n'); } catch (_) { /* client gone */ }
-      }
+    for (const client of this._clients.values()) {
+      try { client.res.write(': ping\n\n'); } catch (_) { /* client gone */ }
     }
   }
 
@@ -204,14 +214,16 @@ class SseManager {
       return false;
     }
 
-    if (typeof filters.minAmount === 'number' && typeof data.amount === 'string') {
-      if (parseFloat(data.amount) < filters.minAmount) {
+    if (typeof filters.minAmount === 'number') {
+      const amount = typeof data.amount === 'number' ? data.amount : parseFloat(data.amount);
+      if (!Number.isFinite(amount) || amount < filters.minAmount) {
         return false;
       }
     }
 
-    if (typeof filters.maxAmount === 'number' && typeof data.amount === 'string') {
-      if (parseFloat(data.amount) > filters.maxAmount) {
+    if (typeof filters.maxAmount === 'number') {
+      const amount = typeof data.amount === 'number' ? data.amount : parseFloat(data.amount);
+      if (!Number.isFinite(amount) || amount > filters.maxAmount) {
         return false;
       }
     }
@@ -227,6 +239,8 @@ class SseManager {
   _reset() {
     this.stop();
     this._clients = new Map();
+    this._eventBuffer = [];
+    this._nextEventId = 1;
   }
 }
 

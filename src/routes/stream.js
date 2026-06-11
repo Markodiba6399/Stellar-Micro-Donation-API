@@ -959,7 +959,7 @@ router.get('/feed', checkPermission(PERMISSIONS.STREAM_READ), (req, res) => {
   }
 
   const clientId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
-  const { added, limitExceeded, client } = SseManager.addClient(keyId, res, filter);
+  const { added, limitExceeded, client } = SseManager.addClient(clientId, keyId, filter, res);
 
   if (limitExceeded) {
     return res.status(429).json({
@@ -1000,7 +1000,7 @@ router.get('/feed', checkPermission(PERMISSIONS.STREAM_READ), (req, res) => {
 
   req.on('close', () => {
     clearInterval(heartbeat);
-    SseManager.removeClient(keyId, client);
+    SseManager.removeClient(clientId);
     log.info('SSE', 'Client disconnected', { clientId, keyId });
   });
 });

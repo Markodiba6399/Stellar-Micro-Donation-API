@@ -11,6 +11,7 @@
  * - GET /stream/leaderboard - SSE endpoint for real-time leaderboard updates
  */
 
+const crypto = require('crypto');
 const express = require('express');
 const router = express.Router();
 const StatsService = require('../services/LeaderboardStatsService');
@@ -198,14 +199,10 @@ router.get('/stream', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) 
       });
     }
 
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.flushHeaders();
-
     const keyId = req.apiKey ? String(req.apiKey.id) : 'anonymous';
-    const { added, limitExceeded, client } = SseManager.addClient(keyId, res, { window });
+    const clientId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+    // Register before sending headers so limit errors can still set a status
+    const { added, limitExceeded, client } = SseManager.addClient(clientId, keyId, { window }, res);
 
     if (limitExceeded) {
       return res.status(429).json({
@@ -218,6 +215,12 @@ router.get('/stream', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) 
       return res.status(500).json({ success: false, error: { code: 'SSE_ERROR', message: 'Failed to add SSE client' } });
     }
 
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
     // Keepalive pings
     const keepaliveMs = parseInt(process.env.LEADERBOARD_KEEPALIVE_MS || '15000', 10);
     const pingInterval = setInterval(() => {
@@ -226,7 +229,7 @@ router.get('/stream', checkPermission(PERMISSIONS.STATS_READ), (req, res, next) 
 
     req.on('close', () => {
       clearInterval(pingInterval);
-      SseManager.removeClient(keyId, client);
+      SseManager.removeClient(clientId);
     });
 
     // Send initial snapshot

@@ -22,7 +22,11 @@ const VALID_TRANSITIONS = Object.freeze({
     TRANSACTION_STATES.CONFIRMED,
     TRANSACTION_STATES.FAILED,
   ]),
-  [TRANSACTION_STATES.CONFIRMED]: new Set(),
+  // confirmed → failed is allowed for reconciliation scenarios (e.g. a
+  // transaction later found to have failed on-network)
+  [TRANSACTION_STATES.CONFIRMED]: new Set([
+    TRANSACTION_STATES.FAILED,
+  ]),
   [TRANSACTION_STATES.FAILED]: new Set(),
 });
 
@@ -59,7 +63,7 @@ const assertValidTransition = (fromState, toState) => {
     const { BusinessLogicError } = require('./errors');
     throw new BusinessLogicError(
       ERROR_CODES.INVALID_STATE_TRANSITION,
-      `Invalid state transition: ${fromState} → ${toState}`,
+      `Invalid transaction state transition: ${fromState} → ${toState}`,
       {
         fromState,
         toState,

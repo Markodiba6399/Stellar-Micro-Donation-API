@@ -634,6 +634,42 @@ router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRat
  * Allow a donor to prove their anonymous donation using their wallet address.
  *
  * Query parameters:
+ *   - donationId    {string} - The ID of the anonymous donation
+ *   - walletAddress {string} - The donor's wallet address to verify
+ *
+ * Returns { verified: boolean, donationId, pseudonymousId, amount, recipient, timestamp }
+ */
+router.get('/verify-anonymous', checkPermission(PERMISSIONS.DONATIONS_READ), async (req, res, next) => {
+  try {
+    const { donationId, walletAddress } = req.query;
+
+    if (!donationId || !walletAddress) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: 'MISSING_REQUIRED_FIELDS',
+          message: 'donationId and walletAddress query parameters are required',
+        },
+      });
+    }
+
+    const result = donationService.verifyAnonymousDonation(donationId, walletAddress);
+
+    if (req.markLifecycleStage) {
+      req.markLifecycleStage(LIFECYCLE_STAGES.PROCESSED);
+    }
+
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /donations/cost-breakdown
+ * Itemized cost breakdown for a prospective donation.
+ *
+ * Query parameters:
  *   @param {string}  amount              - Donation amount in XLM (required, > 0)
  *   @param {string}  [sender]            - Sender public key (optional, for future balance checks)
  *   @param {number}  [surgeFeeMultiplier=1]    - Surge fee multiplier (>= 1)
