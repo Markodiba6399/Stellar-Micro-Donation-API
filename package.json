@@ -3,6 +3,10 @@
   "version": "1.0.0",
   "description": "Micro-donation API using Stellar blockchain",
   "main": "src/app.js",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
   "scripts": {
     "start": "npm run validate-env && node src/app.js",
     "validate-env": "node src/utils/startupChecks.js",
