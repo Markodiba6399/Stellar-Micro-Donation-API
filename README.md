@@ -74,7 +74,7 @@ For detailed architecture documentation, see:
 
 ### Prerequisites
 
-- Node.js (v14 or higher)
+- Node.js (v20 or higher)
 - npm or yarn
 - SQLite3
 
@@ -496,6 +496,7 @@ The scheduler runs automatically when the server starts and checks for due donat
 - **[Stellar Failure Simulation](docs/STELLAR_FAILURE_SIMULATION.md)** - Network failure testing guide
 - **[API Flow Diagram](API%20flow%20diagram.txt)** - API request flow
 - **[Mock Stellar Guide](MOCK_STELLAR_GUIDE.md)** - Using mock Stellar service
+- **[Kubernetes Probes](docs/KUBERNETES_PROBES.md)** - Liveness and readiness probe configuration
 
 ### Development & Deployment
 - **[Pre-Deployment Checklist](docs/guides/PRE_DEPLOYMENT_CHECKLIST.md)** - Production deployment verification
