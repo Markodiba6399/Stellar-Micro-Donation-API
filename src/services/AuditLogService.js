@@ -14,6 +14,7 @@ const log = require('../utils/log');
 const crypto = require('crypto');
 const { sanitizeForLogging } = require('../utils/sanitizer');
 const { maskSensitiveData } = require('../utils/dataMasker');
+const timerRegistry = require('../utils/timerRegistry');
 const { ValidationError, ERROR_CODES } = require('../utils/errors');
 const {
   buildCursorWhereClause,
@@ -388,7 +389,47 @@ class AuditLogService {
    * @returns {Promise<void>}
    */
   static async flush() {
-    // All writes are direct (write-through). Nothing to flush.
+    if (_pendingBuffer.length === 0) return;
+
+    const entries = _pendingBuffer.splice(0, _pendingBuffer.length);
+
+    const writeEntries = async () => {
+      await db.run('BEGIN TRANSACTION');
+      try {
+        for (const entry of entries) {
+          await db.run(
+            `INSERT INTO audit_logs (
+              id, timestamp, category, action, severity, result,
+              userId, requestId, ipAddress, resource, reason,
+              details, integrityHash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              entry.id, entry.timestamp, entry.category, entry.action, entry.severity, entry.result,
+              entry.userId, entry.requestId, entry.ipAddress, entry.resource, entry.reason,
+              entry.details, entry.integrityHash
+            ]
+          );
+        }
+        await db.run('COMMIT');
+      } catch (err) {
+        await db.run('ROLLBACK').catch(() => {});
+        throw err;
+      }
+    };
+
+    const FLUSH_TIMEOUT_MS = 5000;
+    try {
+      await Promise.race([
+        writeEntries(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('flush timeout')), FLUSH_TIMEOUT_MS) // eslint-disable-line local/no-bare-timers
+        ),
+      ]);
+    } catch (err) {
+      process.stderr.write(
+        JSON.stringify({ event: 'audit_flush_failed', error: err.message, entries }) + '\n'
+      );
+    }
   }
 
   /**
@@ -397,7 +438,13 @@ class AuditLogService {
    * @returns {void}
    */
   static startAutoFlush() {
-    // No buffer — direct writes only. No timer needed.
+    if (_autoFlushTimer) return;
+    _autoFlushTimer = timerRegistry.createInterval(() => {
+      if (_pendingBuffer.length > 0) {
+        AuditLogService.flush().catch(() => {});
+      }
+    }, BUFFER_FLUSH_INTERVAL_MS, 'audit-log-auto-flush');
+    _autoFlushTimer.unref();
   }
 
   /**
@@ -406,7 +453,10 @@ class AuditLogService {
    * @returns {void}
    */
   static stopAutoFlush() {
-    // No-op.
+    if (_autoFlushTimer) {
+      _autoFlushTimer.clear();
+      _autoFlushTimer = null;
+    }
   }
 
   /**
