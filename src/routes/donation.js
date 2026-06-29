@@ -186,6 +186,7 @@ const { validateSchema } = require('../middleware/schemaValidation');
 const { validateDateRange } = require('../middleware/validation');
 const { parseCursorPaginationQuery, validateLimit } = require('../utils/pagination');
 const { payloadSizeLimiter, ENDPOINT_LIMITS } = require('../middleware/payloadSizeLimiter');
+const { requestTimeout, TIMEOUTS } = require('../middleware/requestTimeout');
 const { parseAssetInput } = require('../utils/stellarAsset');
 const federation = require('../utils/federation');
 const { LIFECYCLE_STAGES } = require('../middleware/requestLifecycle');
@@ -493,8 +494,11 @@ const createDonationSchema = validateSchema({
 /**
  * POST /donations
  * Create a non-custodial donation record
+ *
+ * Explicit 30s timeout (TIMEOUTS.donation) — this route submits to Horizon,
+ * which is the slowest operation in the API.
  */
-router.post('/', payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, perKeyRateLimit, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
+router.post('/', requestTimeout(TIMEOUTS.donation), payloadSizeLimiter(ENDPOINT_LIMITS.singleDonation), donationRateLimiter, perKeyRateLimit, requireApiKey, requireIdempotency, createDonationSchema, async (req, res, next) => {
   try {
     // Custodial mode: when both senderId and receiverId are supplied, the parties
     // are wallet/user ids rather than on-chain addresses — route to the custodial flow.
